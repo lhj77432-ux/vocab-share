@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { HashRouter, NavLink, Route, Routes } from 'react-router-dom'
+import { HashRouter, NavLink, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
@@ -10,10 +10,9 @@ import {
   demoPack,
   loadApiSettings,
   loadProgress,
-  saveApiSettings,
   saveProgress,
 } from './lib/storage'
-import type { ApiSettings, AppProgress, StudyMode, WordListPack } from './lib/types'
+import type { ApiSettings, AppProgress, WordListPack } from './lib/types'
 import './index.css'
 
 function usePack(): [WordListPack, (p: WordListPack) => void, boolean] {
@@ -46,6 +45,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <div className="brand">DSE 背单词</div>
         <nav className="nav">
           <NavLink to="/" end>首页</NavLink>
+          <NavLink to="/search">搜索</NavLink>
           <NavLink to="/learn">学习</NavLink>
           <NavLink to="/quiz">测验</NavLink>
           <NavLink to="/sentence">造句</NavLink>
@@ -66,12 +66,14 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean; progress: AppProgress }) {
   const known = Object.values(progress.byWord).filter((x) => (x.ease ?? 0) >= 3).length
+  const navigate = useNavigate()
+  const [q, setQ] = useState('')
   return (
     <>
       {shared && <div className="banner">正在查看分享词表（只读词表；你的进度仍保存在本机）</div>}
       <div className="card">
         <h2>{pack.title}</h2>
-        <p className="muted">面向香港 DSE English 的示范词表与练习。可接「自建模型 API」做讲解与分析。</p>
+        <p className="muted">面向香港 DSE English 的示范词表与练习。</p>
         <div className="grid2" style={{ marginTop: 12 }}>
           <div className="stat"><b>{pack.words.length}</b>词条</div>
           <div className="stat"><b>{known}</b>较熟悉</div>
@@ -80,9 +82,32 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
         </div>
       </div>
       <div className="card">
+        <h3>搜索单词</h3>
+        <p className="muted">按英文单词或中文释义查找，回车或点搜索。</p>
+        <form
+          className="row"
+          style={{ marginTop: 8 }}
+          onSubmit={(e) => {
+            e.preventDefault()
+            const t = q.trim()
+            navigate(t ? `/search?q=${encodeURIComponent(t)}` : '/search')
+          }}
+        >
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="例如 sustainable / 可持续"
+            aria-label="搜索单词"
+            style={{ flex: 1, minWidth: 180 }}
+          />
+          <button className="btn btn-primary" type="submit">搜索</button>
+        </form>
+      </div>
+      <div className="card">
         <h3>快速入口</h3>
         <div className="row">
           <NavLink className="btn btn-primary" to="/recommend">今日推荐</NavLink>
+          <NavLink className="btn" to="/search">单词搜索</NavLink>
           <NavLink className="btn" to="/learn">开始学习</NavLink>
           <NavLink className="btn" to="/quiz">测验</NavLink>
           <NavLink className="btn" to="/sentence">造句练习</NavLink>
@@ -102,8 +127,19 @@ function Learn({
   progress: AppProgress
   setProgress: (p: AppProgress) => void
 }) {
-  const [i, setI] = useState(0)
+  const [params] = useSearchParams()
+  const wordParam = params.get('word')
+  const startIdx = useMemo(() => {
+    if (!wordParam) return 0
+    const found = words.findIndex((x) => x.id === wordParam || x.word.toLowerCase() === wordParam.toLowerCase())
+    return found >= 0 ? found : 0
+  }, [wordParam, words])
+  const [i, setI] = useState(startIdx)
   const [show, setShow] = useState(false)
+  useEffect(() => {
+    setI(startIdx)
+    setShow(false)
+  }, [startIdx])
   const w = words[i % words.length]
   if (!w) return <div className="card">词表为空</div>
   return (
@@ -309,6 +345,108 @@ function Sentence({
         </>
       )}
     </div>
+  )
+}
+
+function normalizeQuery(q: string) {
+  return q.trim().toLowerCase()
+}
+
+function matchWord(w: VocabWord, q: string) {
+  if (!q) return false
+  const n = normalizeQuery(q)
+  return (
+    w.word.toLowerCase().includes(n) ||
+    w.meaningZh.toLowerCase().includes(n) ||
+    (w.theme ? w.theme.toLowerCase().includes(n) : false) ||
+    w.category.toLowerCase().includes(n)
+  )
+}
+
+function SearchWords({ words }: { words: VocabWord[] }) {
+  const [params, setParams] = useSearchParams()
+  const initial = params.get('q') ?? ''
+  const [q, setQ] = useState(initial)
+  useEffect(() => {
+    setQ(params.get('q') ?? '')
+  }, [params])
+
+  const results = useMemo(() => {
+    const n = normalizeQuery(q)
+    if (!n) return []
+    return words.filter((w) => matchWord(w, n))
+  }, [words, q])
+
+  const applyQuery = (next: string) => {
+    setQ(next)
+    const t = next.trim()
+    if (t) setParams({ q: t })
+    else setParams({})
+  }
+
+  return (
+    <>
+      <div className="card">
+        <h2>单词搜索</h2>
+        <p className="muted">支持英文单词、中文释义，也可按主题／归类关键词筛选。</p>
+        <form
+          className="row"
+          style={{ marginTop: 8 }}
+          onSubmit={(e) => {
+            e.preventDefault()
+            applyQuery(q)
+          }}
+        >
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="输入英文或中文，例如 recycle / 回收"
+            aria-label="搜索单词"
+            autoFocus
+            style={{ flex: 1, minWidth: 180 }}
+          />
+          <button className="btn btn-primary" type="submit">搜索</button>
+          {q ? (
+            <button className="btn" type="button" onClick={() => applyQuery('')}>清空</button>
+          ) : null}
+        </form>
+      </div>
+      <div className="card">
+        {!normalizeQuery(q) ? (
+          <p className="muted">输入关键词开始搜索。共 {words.length} 个词条可查。</p>
+        ) : results.length === 0 ? (
+          <p className="muted">没有匹配「{q.trim()}」的单词。试试更短的英文词根或中文关键词。</p>
+        ) : (
+          <>
+            <h3>结果 · {results.length} 个</h3>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>单词</th>
+                  <th>词性</th>
+                  <th>中文</th>
+                  <th>归类</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((w) => (
+                  <tr key={w.id}>
+                    <td><b>{w.word}</b></td>
+                    <td>{w.pos}</td>
+                    <td>{w.meaningZh}</td>
+                    <td>{w.category}</td>
+                    <td>
+                      <NavLink className="btn" to={`/learn?word=${encodeURIComponent(w.id)}`}>去学习</NavLink>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -580,65 +718,15 @@ function SharePage({ pack }: { pack: WordListPack }) {
   )
 }
 
-function Settings({ api, setApi }: { api: ApiSettings; setApi: (s: ApiSettings) => void }) {
-  const [mode, setMode] = useState<StudyMode>('vocab')
-  const [msg, setMsg] = useState('用一句话解释 sustainable 在 DSE 写作里怎么用')
-  const [out, setOut] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [draft, setDraft] = useState(api)
-
+function Settings() {
   return (
     <div className="card">
-      <h2>自建模型 API</h2>
-      <div className="warn">此处连接你自己部署／DeepSeek 帮你做的模型服务（OpenAI 兼容 Chat Completions），不是官方 DeepSeek 聊天品牌入口。</div>
-      <label>API Base URL（例如 https://xxx/v1）</label>
-      <input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://your-api.example/v1" />
-      <label>API Key（可选）</label>
-      <input type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} />
-      <label>Model 名</label>
-      <input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} />
-      <div className="row" style={{ marginTop: 10 }}>
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => {
-            saveApiSettings(draft)
-            setApi(draft)
-            alert('已保存到本机')
-          }}
-        >
-          保存
-        </button>
+      <h2>设置</h2>
+      <p className="muted">学习进度保存在本机浏览器，无需登录。</p>
+      <div className="warn">
+        模型 API 与管理功能已移至独立「控制端」，不在本公开学习站配置，避免把密钥暴露在公开页面。
       </div>
-      <h3 style={{ marginTop: 16 }}>模式试聊</h3>
-      <label>模式</label>
-      <select value={mode} onChange={(e) => setMode(e.target.value as StudyMode)}>
-        <option value="vocab">背单词助教</option>
-        <option value="analysis">分析建议</option>
-        <option value="reasoning">逻辑推理</option>
-        <option value="search">上网搜索（占位：无网时会明示）</option>
-      </select>
-      <label>消息</label>
-      <textarea value={msg} onChange={(e) => setMsg(e.target.value)} />
-      <button
-        className="btn"
-        type="button"
-        disabled={busy}
-        style={{ marginTop: 8 }}
-        onClick={async () => {
-          setBusy(true)
-          try {
-            setOut(await chatCompletion(draft, mode, msg))
-          } catch (e) {
-            setOut(e instanceof Error ? e.message : String(e))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        发送
-      </button>
-      {out && <pre style={{ whiteSpace: 'pre-wrap', marginTop: 12, font: 'inherit' }}>{out}</pre>}
+      <p className="muted">现有学习／测验／造句／归类／搜索流程不受影响。</p>
     </div>
   )
 }
@@ -646,7 +734,7 @@ function Settings({ api, setApi }: { api: ApiSettings; setApi: (s: ApiSettings) 
 function AppInner() {
   const [pack, , shared] = usePack()
   const [progress, setProgress] = useState<AppProgress>(() => loadProgress())
-  const [api, setApi] = useState<ApiSettings>(() => loadApiSettings())
+  const [api] = useState<ApiSettings>(() => loadApiSettings())
 
   const persist = useCallback((p: AppProgress) => {
     saveProgress(p)
@@ -657,6 +745,7 @@ function AppInner() {
     <Shell>
       <Routes>
         <Route path="/" element={<Home pack={pack} shared={shared} progress={progress} />} />
+        <Route path="/search" element={<SearchWords words={pack.words} />} />
         <Route path="/learn" element={<Learn words={pack.words} progress={progress} setProgress={persist} />} />
         <Route path="/quiz" element={<Quiz words={pack.words} progress={progress} setProgress={persist} />} />
         <Route path="/sentence" element={<Sentence words={pack.words} progress={progress} setProgress={persist} api={api} />} />
@@ -666,7 +755,7 @@ function AppInner() {
         <Route path="/week" element={<Week words={pack.words} progress={progress} api={api} />} />
         <Route path="/export" element={<ExportPage words={pack.words} progress={progress} title={pack.title} />} />
         <Route path="/share" element={<SharePage pack={pack} />} />
-        <Route path="/settings" element={<Settings api={api} setApi={setApi} />} />
+        <Route path="/settings" element={<Settings />} />
       </Routes>
     </Shell>
   )
