@@ -75,3 +75,78 @@ export function todayStr() {
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
+
+/** Favorites of online-searched dictionary words (local only). */
+const FAVORITES_KEY = 'vocab-share-favorites-v1'
+
+export type FavoriteSense = {
+  partOfSpeech: string
+  definition: string
+  example?: string
+}
+
+export type FavoriteWord = {
+  /** lowercase key */
+  word: string
+  displayWord: string
+  phonetic?: string
+  audio?: string
+  meanings: FavoriteSense[]
+  sourceUrls: string[]
+  favoritedAt: string
+}
+
+export function loadFavorites(): FavoriteWord[] {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY)
+    if (raw) {
+      const arr = JSON.parse(raw) as FavoriteWord[]
+      if (Array.isArray(arr)) return arr
+    }
+  } catch { /* ignore */ }
+  return []
+}
+
+export function saveFavorites(list: FavoriteWord[]) {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify(list))
+}
+
+export function isFavoriteWord(list: FavoriteWord[], word: string) {
+  const key = word.trim().toLowerCase()
+  return list.some((f) => f.word === key)
+}
+
+export function entryToFavorite(entry: {
+  word: string
+  phonetic?: string
+  audio?: string
+  meanings: { partOfSpeech: string; definition: string; example?: string }[]
+  sourceUrls: string[]
+}): FavoriteWord {
+  return {
+    word: entry.word.trim().toLowerCase(),
+    displayWord: entry.word.trim(),
+    phonetic: entry.phonetic,
+    audio: entry.audio,
+    meanings: entry.meanings.slice(0, 12).map((m) => ({
+      partOfSpeech: m.partOfSpeech,
+      definition: m.definition,
+      example: m.example,
+    })),
+    sourceUrls: entry.sourceUrls.slice(0, 4),
+    favoritedAt: new Date().toISOString(),
+  }
+}
+
+export function toggleFavorite(list: FavoriteWord[], entry: Parameters<typeof entryToFavorite>[0]): FavoriteWord[] {
+  const key = entry.word.trim().toLowerCase()
+  if (list.some((f) => f.word === key)) {
+    return list.filter((f) => f.word !== key)
+  }
+  return [entryToFavorite(entry), ...list]
+}
+
+export function removeFavorite(list: FavoriteWord[], word: string): FavoriteWord[] {
+  const key = word.trim().toLowerCase()
+  return list.filter((f) => f.word !== key)
+}

@@ -9,9 +9,15 @@ import { recommendToday, weekStats, weeklySummaryText } from './lib/srs'
 import { buildShareUrl, decodeSharePack, shareCodeFromId } from './lib/share'
 import {
   demoPack,
+  isFavoriteWord,
   loadApiSettings,
+  loadFavorites,
   loadProgress,
+  removeFavorite,
+  saveFavorites,
   saveProgress,
+  toggleFavorite,
+  type FavoriteWord,
 } from './lib/storage'
 import type { ApiSettings, AppProgress, WordListPack } from './lib/types'
 import './index.css'
@@ -90,6 +96,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           <nav className="nav">
             <NavLink to="/" end>首页</NavLink>
             <NavLink to="/search">搜索</NavLink>
+            <NavLink to="/favorites">收藏</NavLink>
             <NavLink to="/learn">学习</NavLink>
             <NavLink to="/quiz">测验</NavLink>
             <NavLink to="/sentence">造句</NavLink>
@@ -159,6 +166,7 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
         <div className="row" style={{ marginTop: 8 }}>
           <NavLink className="btn btn-primary" to="/recommend">今日推荐</NavLink>
           <NavLink className="btn" to="/search">单词搜索</NavLink>
+          <NavLink className="btn" to="/favorites">我的收藏</NavLink>
           <NavLink className="btn" to="/learn">开始学习</NavLink>
           <NavLink className="btn" to="/quiz">测验</NavLink>
           <NavLink className="btn" to="/sentence">造句练习</NavLink>
@@ -441,6 +449,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
   const [onlineMsg, setOnlineMsg] = useState<string | null>(null)
   const [lastLookedUp, setLastLookedUp] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
+  const [favorites, setFavorites] = useState<FavoriteWord[]>(() => loadFavorites())
 
   useEffect(() => {
     setQ(params.get('q') ?? '')
@@ -518,16 +527,30 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     }
   }
 
+  const persistFavorites = (next: FavoriteWord[]) => {
+    saveFavorites(next)
+    setFavorites(next)
+  }
+
   const entry = onlineEntries?.[0]
   const examples = entry
     ? entry.meanings.filter((m) => m.example).slice(0, 6)
     : []
+  const favorited = entry ? isFavoriteWord(favorites, entry.word) : false
+
+  const onToggleFavorite = () => {
+    if (!entry) return
+    const next = toggleFavorite(favorites, entry)
+    const nowOn = isFavoriteWord(next, entry.word)
+    persistFavorites(next)
+    toast(nowOn ? `已收藏「${entry.word}」` : `已取消收藏「${entry.word}」`)
+  }
 
   return (
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">输入英文单词后搜索，会弹出网上词典的音标、释义与例句；本地词表作补充。</p>
+        <p className="muted">输入英文单词后搜索，会弹出网上词典的音标、释义与例句；可收藏搜索过的词，本地词表作补充。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -550,6 +573,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
           {q ? (
             <button className="btn" type="button" onClick={() => applyQuery('')}>清空</button>
           ) : null}
+          <NavLink className="btn" to="/favorites">我的收藏{favorites.length ? ` · ${favorites.length}` : ''}</NavLink>
         </form>
         {lastLookedUp && !modalOpen && !loading ? (
           <p className="muted" style={{ marginTop: 10 }}>
@@ -619,13 +643,23 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                     <span className="dict-word">{entry.word}</span>
                     {entry.phonetic ? <span className="dict-phon">{entry.phonetic}</span> : null}
                   </div>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => playAudio(entry.audio, entry.word)}
-                  >
-                    发音
-                  </button>
+                  <div className="dict-head-actions">
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => playAudio(entry.audio, entry.word)}
+                    >
+                      发音
+                    </button>
+                    <button
+                      className={`btn fav-btn${favorited ? ' fav-on' : ''}`}
+                      type="button"
+                      onClick={onToggleFavorite}
+                      aria-pressed={favorited}
+                    >
+                      {favorited ? '★ 已收藏' : '☆ 收藏'}
+                    </button>
+                  </div>
                 </div>
 
                 <h4 className="dict-section">释义</h4>
@@ -675,7 +709,177 @@ function SearchWords({ words }: { words: VocabWord[] }) {
             )}
 
             <div className="modal-actions">
+              {entry ? (
+                <button
+                  className={`btn fav-btn${favorited ? ' fav-on' : ''}`}
+                  type="button"
+                  onClick={onToggleFavorite}
+                  aria-pressed={favorited}
+                >
+                  {favorited ? '★ 已收藏' : '☆ 收藏'}
+                </button>
+              ) : null}
               <button className="btn btn-primary" type="button" onClick={closeModal}>知道了</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+function FavoritesPage() {
+  const [favorites, setFavorites] = useState<FavoriteWord[]>(() => loadFavorites())
+  const [detail, setDetail] = useState<FavoriteWord | null>(null)
+
+  const persist = (next: FavoriteWord[]) => {
+    saveFavorites(next)
+    setFavorites(next)
+  }
+
+  const unfavorite = (word: string) => {
+    const next = removeFavorite(favorites, word)
+    persist(next)
+    if (detail && detail.word === word.trim().toLowerCase()) setDetail(null)
+    toast(`已取消收藏「${word}」`)
+  }
+
+  const playAudio = (url?: string, word?: string) => {
+    if (url) {
+      const a = new Audio(url)
+      a.play().catch(() => {
+        if (word && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(word)
+          u.lang = 'en-US'
+          speechSynthesis.cancel()
+          speechSynthesis.speak(u)
+        }
+      })
+      return
+    }
+    if (word && 'speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance(word)
+      u.lang = 'en-US'
+      speechSynthesis.cancel()
+      speechSynthesis.speak(u)
+    }
+  }
+
+  return (
+    <>
+      <div className="card">
+        <h2>搜索收藏</h2>
+        <p className="muted">这里保存你从网上词典搜索并收藏的单词（仅本机浏览器）。</p>
+        <div className="row" style={{ marginTop: 10 }}>
+          <NavLink className="btn btn-primary" to="/search">去搜索单词</NavLink>
+          {favorites.length > 0 ? (
+            <button
+              className="btn"
+              type="button"
+              onClick={() => {
+                if (!confirm(`确定清空全部 ${favorites.length} 个收藏？`)) return
+                persist([])
+                setDetail(null)
+                toast('已清空收藏')
+              }}
+            >
+              清空全部
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {!favorites.length ? (
+        <div className="card">
+          <p className="muted">还没有收藏。在「搜索」里查到网上释义后，点「收藏」即可。</p>
+        </div>
+      ) : (
+        <div className="fav-grid">
+          {favorites.map((f) => {
+            const preview = f.meanings[0]
+            const ex = f.meanings.find((m) => m.example)?.example
+            return (
+              <article key={f.word} className="card fav-card">
+                <div className="dict-head">
+                  <div>
+                    <span className="dict-word">{f.displayWord}</span>
+                    {f.phonetic ? <span className="dict-phon">{f.phonetic}</span> : null}
+                  </div>
+                  <button className="btn" type="button" onClick={() => playAudio(f.audio, f.displayWord)}>发音</button>
+                </div>
+                {preview ? (
+                  <p style={{ marginTop: 6 }}>
+                    {preview.partOfSpeech ? <span className="dict-pos">{preview.partOfSpeech}</span> : null}
+                    {preview.definition}
+                  </p>
+                ) : null}
+                {ex ? <p className="dict-ex-line" style={{ marginTop: 8 }}>“{ex}”</p> : null}
+                <div className="row" style={{ marginTop: 12 }}>
+                  <button className="btn" type="button" onClick={() => setDetail(f)}>查看</button>
+                  <NavLink className="btn" to={`/search?q=${encodeURIComponent(f.displayWord)}`}>再搜一次</NavLink>
+                  <button className="btn fav-btn fav-on" type="button" onClick={() => unfavorite(f.displayWord)}>
+                    ★ 取消收藏
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+
+      {detail ? (
+        <div
+          className="mask show"
+          role="dialog"
+          aria-modal="true"
+          aria-label="收藏详情"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDetail(null)
+          }}
+        >
+          <div className="modal dict-modal">
+            <div className="modal-top">
+              <h3>收藏 · {detail.displayWord}</h3>
+              <button className="icon-btn" type="button" aria-label="关闭" onClick={() => setDetail(null)}>✕</button>
+            </div>
+            <div className="dict-head">
+              <div>
+                <span className="dict-word">{detail.displayWord}</span>
+                {detail.phonetic ? <span className="dict-phon">{detail.phonetic}</span> : null}
+              </div>
+              <button className="btn" type="button" onClick={() => playAudio(detail.audio, detail.displayWord)}>发音</button>
+            </div>
+            <h4 className="dict-section">释义</h4>
+            <ul className="dict-meanings">
+              {detail.meanings.slice(0, 8).map((m, mi) => (
+                <li key={mi}>
+                  {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
+                  <span>{m.definition}</span>
+                </li>
+              ))}
+            </ul>
+            <h4 className="dict-section">例句</h4>
+            {detail.meanings.some((m) => m.example) ? (
+              <ul className="dict-examples">
+                {detail.meanings.filter((m) => m.example).slice(0, 6).map((m, mi) => (
+                  <li key={mi}>
+                    {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
+                    <span className="dict-ex-line">“{m.example}”</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">该词条暂无例句。</p>
+            )}
+            <div className="modal-actions">
+              <button
+                className="btn fav-btn fav-on"
+                type="button"
+                onClick={() => unfavorite(detail.displayWord)}
+              >
+                ★ 取消收藏
+              </button>
+              <button className="btn btn-primary" type="button" onClick={() => setDetail(null)}>关闭</button>
             </div>
           </div>
         </div>
@@ -970,7 +1174,7 @@ function Settings() {
       <p className="muted" style={{ marginTop: 6 }}>
         默认已接免费模型 Pollinations；小模型训好后再换。匿名约每 30 秒可请求 1 次，遇限流稍候再试。
       </p>
-      <p className="muted">现有学习／测验／造句／归类／搜索／导出／分享流程不受影响。</p>
+      <p className="muted">现有学习／测验／造句／归类／搜索／收藏／导出／分享流程不受影响。</p>
     </div>
   )
 }
@@ -990,6 +1194,7 @@ function AppInner() {
       <Routes>
         <Route path="/" element={<Home pack={pack} shared={shared} progress={progress} />} />
         <Route path="/search" element={<SearchWords words={pack.words} />} />
+        <Route path="/favorites" element={<FavoritesPage />} />
         <Route path="/learn" element={<Learn words={pack.words} progress={progress} setProgress={persist} />} />
         <Route path="/quiz" element={<Quiz words={pack.words} progress={progress} setProgress={persist} />} />
         <Route path="/sentence" element={<Sentence words={pack.words} progress={progress} setProgress={persist} api={api} />} />

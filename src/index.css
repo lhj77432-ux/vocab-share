@@ -537,3 +537,27 @@ body.dark .toast { background: #eceef5; color: #12141b; }
   gap: 8px;
   margin-top: 18px;
 }
+
+.dict-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.fav-btn.fav-on {
+  background: color-mix(in srgb, var(--primary) 14%, var(--card));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  color: var(--primary);
+  font-weight: 700;
+}
+.fav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.fav-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
