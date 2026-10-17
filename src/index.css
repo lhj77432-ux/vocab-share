@@ -449,15 +449,15 @@ body.dark .toast { background: #eceef5; color: #12141b; }
 }
 
 
-/* Online dictionary results */
+/* Online dictionary results + modal */
 .dict-list { display: flex; flex-direction: column; gap: 16px; }
 .dict-entry { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .dict-entry:last-child { border-bottom: none; padding-bottom: 0; }
 .dict-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
-.dict-word { font-size: 1.35rem; font-weight: 800; margin-right: 10px; }
+.dict-word { font-size: 1.45rem; font-weight: 800; margin-right: 10px; }
 .dict-phon { color: var(--muted); font-size: 0.95rem; }
-.dict-meanings { list-style: none; display: flex; flex-direction: column; gap: 10px; }
-.dict-meanings li { line-height: 1.45; }
+.dict-meanings, .dict-examples { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.dict-meanings li, .dict-examples li { line-height: 1.45; }
 .dict-pos {
   display: inline-block;
   font-size: 0.75rem;
@@ -470,11 +470,70 @@ body.dark .toast { background: #eceef5; color: #12141b; }
   margin-right: 8px;
   text-transform: lowercase;
 }
-.dict-ex {
+.dict-ex, .dict-ex-line {
   margin-top: 4px;
   padding-left: 10px;
   border-left: 3px solid var(--primary);
   color: var(--muted);
   font-style: italic;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+  display: inline-block;
+}
+.dict-section {
+  margin: 16px 0 8px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.dict-fail .warn { margin-top: 4px; }
+
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(20, 24, 40, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.mask.show { display: flex; }
+.modal {
+  width: min(560px, 100%);
+  max-height: min(82vh, 720px);
+  overflow: auto;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 20px 20px 16px;
+}
+.modal-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.modal-top h3 { margin: 0; font-size: 1.1rem; }
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }

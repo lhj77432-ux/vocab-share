@@ -440,6 +440,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
   const [onlineEntries, setOnlineEntries] = useState<DictEntry[] | null>(null)
   const [onlineMsg, setOnlineMsg] = useState<string | null>(null)
   const [lastLookedUp, setLastLookedUp] = useState('')
+  const [modalOpen, setModalOpen] = useState(false)
 
   useEffect(() => {
     setQ(params.get('q') ?? '')
@@ -457,11 +458,14 @@ function SearchWords({ words }: { words: VocabWord[] }) {
       setOnlineEntries(null)
       setOnlineMsg(null)
       setLastLookedUp('')
+      setModalOpen(false)
+      setLoading(false)
       return
     }
     let cancelled = false
     ;(async () => {
       setLoading(true)
+      setModalOpen(true)
       setOnlineMsg(null)
       setOnlineEntries(null)
       setLastLookedUp(term)
@@ -485,8 +489,13 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     setQ(next)
     const t = next.trim()
     if (t) setParams({ q: t })
-    else setParams({})
+    else {
+      setParams({})
+      setModalOpen(false)
+    }
   }
+
+  const closeModal = () => setModalOpen(false)
 
   const playAudio = (url?: string, word?: string) => {
     if (url) {
@@ -509,11 +518,16 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     }
   }
 
+  const entry = onlineEntries?.[0]
+  const examples = entry
+    ? entry.meanings.filter((m) => m.example).slice(0, 6)
+    : []
+
   return (
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">优先查网上免费英英词典（Free Dictionary API）；本地词表作补充／离线备用。</p>
+        <p className="muted">输入英文单词后搜索，会弹出网上词典的音标、释义与例句；本地词表作补充。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -537,61 +551,13 @@ function SearchWords({ words }: { words: VocabWord[] }) {
             <button className="btn" type="button" onClick={() => applyQuery('')}>清空</button>
           ) : null}
         </form>
-      </div>
-
-      <div className="card">
-        <h3>网上词典</h3>
-        {!normalizeQuery(q) ? (
-          <p className="muted">输入英文单词后点搜索，将从网上词典拉取释义、音标与例句。</p>
-        ) : loading ? (
-          <p className="muted">正在查询「{q.trim()}」…</p>
-        ) : onlineEntries && onlineEntries.length > 0 ? (
-          <div className="dict-list">
-            {onlineEntries.map((entry, ei) => (
-              <div className="dict-entry" key={`${entry.word}-${ei}`}>
-                <div className="dict-head">
-                  <div>
-                    <span className="dict-word">{entry.word}</span>
-                    {entry.phonetic ? <span className="dict-phon">{entry.phonetic}</span> : null}
-                  </div>
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => playAudio(entry.audio, entry.word)}
-                  >
-                    发音
-                  </button>
-                </div>
-                <ul className="dict-meanings">
-                  {entry.meanings.map((m, mi) => (
-                    <li key={mi}>
-                      {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
-                      <span>{m.definition}</span>
-                      {m.example ? <div className="dict-ex">“{m.example}”</div> : null}
-                      {m.synonyms.length > 0 ? (
-                        <div className="muted" style={{ fontSize: '0.85rem', marginTop: 4 }}>
-                          近义：{m.synonyms.join(', ')}
-                        </div>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-                {entry.sourceUrls[0] ? (
-                  <p className="muted" style={{ fontSize: '0.8rem', marginTop: 8 }}>
-                    来源：<a href={entry.sourceUrls[0]} target="_blank" rel="noreferrer">{entry.sourceUrls[0]}</a>
-                  </p>
-                ) : null}
-              </div>
-            ))}
-            <p className="muted" style={{ fontSize: '0.8rem', marginTop: 8 }}>
-              数据来自 Free Dictionary API（dictionaryapi.dev），无需密钥。
-            </p>
-          </div>
-        ) : (
-          <p className={onlineMsg?.includes('离线') || onlineMsg?.includes('不可用') || onlineMsg?.includes('失败') ? 'warn' : 'muted'}>
-            {onlineMsg ?? (lastLookedUp ? `暂无「${lastLookedUp}」的网上结果。` : '暂无结果。')}
+        {lastLookedUp && !modalOpen && !loading ? (
+          <p className="muted" style={{ marginTop: 10 }}>
+            最近查询：<b>{lastLookedUp}</b>
+            {' · '}
+            <button className="btn" type="button" onClick={() => setModalOpen(true)}>再看释义</button>
           </p>
-        )}
+        ) : null}
       </div>
 
       <div className="card">
@@ -627,6 +593,93 @@ function SearchWords({ words }: { words: VocabWord[] }) {
           </table>
         )}
       </div>
+
+      {modalOpen ? (
+        <div
+          className="mask show"
+          role="dialog"
+          aria-modal="true"
+          aria-label="网上词典释义"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeModal()
+          }}
+        >
+          <div className="modal dict-modal">
+            <div className="modal-top">
+              <h3>网上词典</h3>
+              <button className="icon-btn" type="button" aria-label="关闭" onClick={closeModal}>✕</button>
+            </div>
+
+            {loading ? (
+              <p className="muted">正在查询「{lastLookedUp || q.trim()}」…</p>
+            ) : entry ? (
+              <>
+                <div className="dict-head">
+                  <div>
+                    <span className="dict-word">{entry.word}</span>
+                    {entry.phonetic ? <span className="dict-phon">{entry.phonetic}</span> : null}
+                  </div>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => playAudio(entry.audio, entry.word)}
+                  >
+                    发音
+                  </button>
+                </div>
+
+                <h4 className="dict-section">释义</h4>
+                <ul className="dict-meanings">
+                  {entry.meanings.slice(0, 8).map((m, mi) => (
+                    <li key={mi}>
+                      {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
+                      <span>{m.definition}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                <h4 className="dict-section">例句</h4>
+                {examples.length > 0 ? (
+                  <ul className="dict-examples">
+                    {examples.map((m, mi) => (
+                      <li key={mi}>
+                        {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
+                        <span className="dict-ex-line">“{m.example}”</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted">该词条暂无例句，可参考上方释义。</p>
+                )}
+
+                {entry.sourceUrls[0] ? (
+                  <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
+                    来源：<a href={entry.sourceUrls[0]} target="_blank" rel="noreferrer">Wiktionary</a>
+                    {' · '}Free Dictionary API
+                  </p>
+                ) : (
+                  <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
+                    数据来自 Free Dictionary API（无需密钥）
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="dict-fail">
+                <p className="warn" style={{ marginBottom: 0 }}>
+                  {onlineMsg ?? (lastLookedUp ? `暂无「${lastLookedUp}」的网上结果。` : '暂无结果。')}
+                </p>
+                <p className="muted" style={{ marginTop: 10 }}>
+                  可检查拼写后重试，或查看页面下方的本地词表匹配。
+                </p>
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button className="btn btn-primary" type="button" onClick={closeModal}>知道了</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   )
 }
