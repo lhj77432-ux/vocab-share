@@ -1,4 +1,5 @@
 import type { ApiSettings, StudyMode } from './types'
+import { DEFAULT_API } from './storage'
 
 const MODE_PROMPTS: Record<StudyMode, string> = {
   vocab: '你是香港 DSE English 背单词助教。用简洁中文讲解词义、搭配与例句，必要时给简易英文例句。',
@@ -12,16 +13,17 @@ export async function chatCompletion(
   mode: StudyMode,
   userMessage: string,
 ): Promise<string> {
-  if (!settings.baseUrl?.trim()) throw new Error('请先在设置里填写自建模型 API 地址')
-  const url = settings.baseUrl.replace(/\/$/, '') + '/chat/completions'
+  const base = (settings.baseUrl?.trim() || DEFAULT_API.baseUrl).replace(/\/$/, '')
+  const model = settings.model?.trim() || DEFAULT_API.model
+  const url = base + '/chat/completions'
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {}),
+      ...(settings.apiKey?.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
     },
     body: JSON.stringify({
-      model: settings.model || 'default',
+      model,
       messages: [
         { role: 'system', content: MODE_PROMPTS[mode] },
         { role: 'user', content: userMessage },
@@ -31,6 +33,9 @@ export async function chatCompletion(
   })
   if (!res.ok) {
     const t = await res.text().catch(() => '')
+    if (res.status === 402) {
+      throw new Error('免费额度稍忙，请约 30 秒后再试一次（匿名约每 30 秒 1 次）')
+    }
     throw new Error(`API ${res.status}: ${t.slice(0, 200)}`)
   }
   const data = await res.json()

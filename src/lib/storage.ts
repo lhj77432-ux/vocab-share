@@ -5,6 +5,13 @@ const PROGRESS_KEY = 'vocab-share-progress-v1'
 const API_KEY = 'vocab-share-api-v1'
 const CUSTOM_LISTS_KEY = 'vocab-share-lists-v1'
 
+/** Default free OpenAI-compatible endpoint (no signup / no key). */
+export const DEFAULT_API: ApiSettings = {
+  baseUrl: 'https://text.pollinations.ai/v1',
+  apiKey: '',
+  model: 'gpt-oss-20b',
+}
+
 export function demoPack(): WordListPack {
   return {
     id: DEMO_LIST_ID,
@@ -29,9 +36,20 @@ export function saveProgress(p: AppProgress) {
 export function loadApiSettings(): ApiSettings {
   try {
     const raw = localStorage.getItem(API_KEY)
-    if (raw) return JSON.parse(raw) as ApiSettings
+    if (raw) {
+      const parsed = JSON.parse(raw) as ApiSettings
+      // Empty baseUrl = unset → use free default (existing installs without manual clear)
+      if (!parsed.baseUrl?.trim()) {
+        return { ...DEFAULT_API }
+      }
+      return {
+        baseUrl: parsed.baseUrl,
+        apiKey: parsed.apiKey ?? '',
+        model: parsed.model?.trim() || DEFAULT_API.model,
+      }
+    }
   } catch { /* ignore */ }
-  return { baseUrl: '', apiKey: '', model: 'default' }
+  return { ...DEFAULT_API }
 }
 
 export function saveApiSettings(s: ApiSettings) {

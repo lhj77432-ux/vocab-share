@@ -349,7 +349,7 @@ function Sentence({
   return (
     <div className="card">
       <h2>造句练习（DSE）</h2>
-      <p className="muted">用目标词写一句与校园／社会话题相关的英文句子，可请 AI 点评（需在控制端配置接口）。</p>
+      <p className="muted">用目标词写一句与校园／社会话题相关的英文句子，可请免费 AI 点评（默认已接 Pollinations）。</p>
       <span className="tag">{w.category}</span>
       <div className="word-big">{w.word}</div>
       <p><b>{w.meaningZh}</b> · 参考：{w.example}</p>
@@ -396,7 +396,7 @@ function Sentence({
             }
           }}
         >
-          自建模型点评
+          AI 点评
         </button>
         <button className="btn" type="button" onClick={() => { setIdx((i) => i + 1); setText(''); setFeedback('') }}>换词</button>
       </div>
@@ -613,7 +613,7 @@ function Recommend({
             }
           }}
         >
-          自建模型解释为何这样排
+          AI 解释为何这样排
         </button>
       </div>
       {explain && <pre style={{ whiteSpace: 'pre-wrap', marginTop: 12, font: 'inherit' }}>{explain}</pre>}
@@ -723,7 +723,7 @@ function Week({
           }
         }}
       >
-        自建模型加深分析
+        AI 加深分析
       </button>
       {extra && <pre style={{ whiteSpace: 'pre-wrap', marginTop: 12, font: 'inherit' }}>{extra}</pre>}
     </div>
@@ -797,9 +797,13 @@ function Settings() {
           {dark ? '切换为浅色模式 ☀️' : '切换为深色模式 🌙'}
         </button>
       </div>
-      <div className="warn">
-        模型 API 与管理功能已移至独立「控制端」，不在本公开学习站配置，避免把密钥暴露在公开页面。
-      </div>
+      <p style={{ marginTop: 8 }}>
+        <b>当前：免费 Pollinations</b>
+        <span className="muted">（gpt-oss-20b · 无需密钥）</span>
+      </p>
+      <p className="muted" style={{ marginTop: 6 }}>
+        默认已接免费模型 Pollinations；小模型训好后再换。匿名约每 30 秒可请求 1 次，遇限流稍候再试。
+      </p>
       <p className="muted">现有学习／测验／造句／归类／搜索／导出／分享流程不受影响。</p>
     </div>
   )
