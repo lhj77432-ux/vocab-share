@@ -447,3 +447,34 @@ body.dark .toast { background: #eceef5; color: #12141b; }
   .nav { width: 100%; order: 3; }
   .nav a { padding: 6px 10px; font-size: 0.8rem; }
 }
+
+
+/* Online dictionary results */
+.dict-list { display: flex; flex-direction: column; gap: 16px; }
+.dict-entry { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.dict-entry:last-child { border-bottom: none; padding-bottom: 0; }
+.dict-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.dict-word { font-size: 1.35rem; font-weight: 800; margin-right: 10px; }
+.dict-phon { color: var(--muted); font-size: 0.95rem; }
+.dict-meanings { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.dict-meanings li { line-height: 1.45; }
+.dict-pos {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: 99px;
+  padding: 2px 10px;
+  margin-right: 8px;
+  text-transform: lowercase;
+}
+.dict-ex {
+  margin-top: 4px;
+  padding-left: 10px;
+  border-left: 3px solid var(--primary);
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.9rem;
+}

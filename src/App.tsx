@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
+import { lookupEnglishWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
 import { recommendToday, weekStats, weeklySummaryText } from './lib/srs'
@@ -131,7 +132,7 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
       </section>
       <div className="card">
         <h3>搜索单词</h3>
-        <p className="muted">按英文单词或中文释义查找，回车或点搜索。</p>
+        <p className="muted">查网上英文词典释义；也可用中文在本地词表里筛。</p>
         <form
           className="toolbar"
           style={{ marginTop: 10 }}
@@ -146,7 +147,7 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="例如 sustainable / 可持续"
+              placeholder="例如 sustainable（网上词典）"
               aria-label="搜索单词"
             />
           </div>
@@ -435,15 +436,50 @@ function SearchWords({ words }: { words: VocabWord[] }) {
   const [params, setParams] = useSearchParams()
   const initial = params.get('q') ?? ''
   const [q, setQ] = useState(initial)
+  const [loading, setLoading] = useState(false)
+  const [onlineEntries, setOnlineEntries] = useState<DictEntry[] | null>(null)
+  const [onlineMsg, setOnlineMsg] = useState<string | null>(null)
+  const [lastLookedUp, setLastLookedUp] = useState('')
+
   useEffect(() => {
     setQ(params.get('q') ?? '')
   }, [params])
 
-  const results = useMemo(() => {
+  const localResults = useMemo(() => {
     const n = normalizeQuery(q)
     if (!n) return []
     return words.filter((w) => matchWord(w, n))
   }, [words, q])
+
+  useEffect(() => {
+    const term = (params.get('q') ?? '').trim()
+    if (!term) {
+      setOnlineEntries(null)
+      setOnlineMsg(null)
+      setLastLookedUp('')
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      setOnlineMsg(null)
+      setOnlineEntries(null)
+      setLastLookedUp(term)
+      const result = await lookupEnglishWord(term)
+      if (cancelled) return
+      if (result.ok) {
+        setOnlineEntries(result.entries)
+        setOnlineMsg(null)
+      } else {
+        setOnlineEntries(null)
+        setOnlineMsg(result.message)
+      }
+      setLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [params])
 
   const applyQuery = (next: string) => {
     setQ(next)
@@ -452,11 +488,32 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     else setParams({})
   }
 
+  const playAudio = (url?: string, word?: string) => {
+    if (url) {
+      const a = new Audio(url)
+      a.play().catch(() => {
+        if (word && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(word)
+          u.lang = 'en-US'
+          speechSynthesis.cancel()
+          speechSynthesis.speak(u)
+        }
+      })
+      return
+    }
+    if (word && 'speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance(word)
+      u.lang = 'en-US'
+      speechSynthesis.cancel()
+      speechSynthesis.speak(u)
+    }
+  }
+
   return (
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">支持英文单词、中文释义，也可按主题／归类关键词筛选。</p>
+        <p className="muted">优先查网上免费英英词典（Free Dictionary API）；本地词表作补充／离线备用。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -468,50 +525,106 @@ function SearchWords({ words }: { words: VocabWord[] }) {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="输入英文或中文，例如 recycle / 回收"
+            placeholder="输入英文单词，例如 recycle / sustainable"
             aria-label="搜索单词"
             autoFocus
             style={{ flex: 1, minWidth: 180 }}
           />
-          <button className="btn btn-primary" type="submit">搜索</button>
+          <button className="btn btn-primary" type="submit" disabled={loading}>
+            {loading ? '查询中…' : '搜索'}
+          </button>
           {q ? (
             <button className="btn" type="button" onClick={() => applyQuery('')}>清空</button>
           ) : null}
         </form>
       </div>
+
       <div className="card">
+        <h3>网上词典</h3>
         {!normalizeQuery(q) ? (
-          <p className="muted">输入关键词开始搜索。共 {words.length} 个词条可查。</p>
-        ) : results.length === 0 ? (
-          <p className="muted">没有匹配「{q.trim()}」的单词。试试更短的英文词根或中文关键词。</p>
+          <p className="muted">输入英文单词后点搜索，将从网上词典拉取释义、音标与例句。</p>
+        ) : loading ? (
+          <p className="muted">正在查询「{q.trim()}」…</p>
+        ) : onlineEntries && onlineEntries.length > 0 ? (
+          <div className="dict-list">
+            {onlineEntries.map((entry, ei) => (
+              <div className="dict-entry" key={`${entry.word}-${ei}`}>
+                <div className="dict-head">
+                  <div>
+                    <span className="dict-word">{entry.word}</span>
+                    {entry.phonetic ? <span className="dict-phon">{entry.phonetic}</span> : null}
+                  </div>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => playAudio(entry.audio, entry.word)}
+                  >
+                    发音
+                  </button>
+                </div>
+                <ul className="dict-meanings">
+                  {entry.meanings.map((m, mi) => (
+                    <li key={mi}>
+                      {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
+                      <span>{m.definition}</span>
+                      {m.example ? <div className="dict-ex">“{m.example}”</div> : null}
+                      {m.synonyms.length > 0 ? (
+                        <div className="muted" style={{ fontSize: '0.85rem', marginTop: 4 }}>
+                          近义：{m.synonyms.join(', ')}
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                {entry.sourceUrls[0] ? (
+                  <p className="muted" style={{ fontSize: '0.8rem', marginTop: 8 }}>
+                    来源：<a href={entry.sourceUrls[0]} target="_blank" rel="noreferrer">{entry.sourceUrls[0]}</a>
+                  </p>
+                ) : null}
+              </div>
+            ))}
+            <p className="muted" style={{ fontSize: '0.8rem', marginTop: 8 }}>
+              数据来自 Free Dictionary API（dictionaryapi.dev），无需密钥。
+            </p>
+          </div>
         ) : (
-          <>
-            <h3>结果 · {results.length} 个</h3>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>单词</th>
-                  <th>词性</th>
-                  <th>中文</th>
-                  <th>归类</th>
-                  <th></th>
+          <p className={onlineMsg?.includes('离线') || onlineMsg?.includes('不可用') || onlineMsg?.includes('失败') ? 'warn' : 'muted'}>
+            {onlineMsg ?? (lastLookedUp ? `暂无「${lastLookedUp}」的网上结果。` : '暂无结果。')}
+          </p>
+        )}
+      </div>
+
+      <div className="card">
+        <h3>本地词表{normalizeQuery(q) ? ` · ${localResults.length} 个` : ''}</h3>
+        {!normalizeQuery(q) ? (
+          <p className="muted">共 {words.length} 个示范词条可筛选；支持英文或中文关键词。</p>
+        ) : localResults.length === 0 ? (
+          <p className="muted">本地词表没有匹配「{q.trim()}」。</p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>单词</th>
+                <th>词性</th>
+                <th>中文</th>
+                <th>归类</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {localResults.map((w) => (
+                <tr key={w.id}>
+                  <td><b>{w.word}</b></td>
+                  <td>{w.pos}</td>
+                  <td>{w.meaningZh}</td>
+                  <td>{w.category}</td>
+                  <td>
+                    <NavLink className="btn" to={`/learn?word=${encodeURIComponent(w.id)}`}>去学习</NavLink>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {results.map((w) => (
-                  <tr key={w.id}>
-                    <td><b>{w.word}</b></td>
-                    <td>{w.pos}</td>
-                    <td>{w.meaningZh}</td>
-                    <td>{w.category}</td>
-                    <td>
-                      <NavLink className="btn" to={`/learn?word=${encodeURIComponent(w.id)}`}>去学习</NavLink>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </>
