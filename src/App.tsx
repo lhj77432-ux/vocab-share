@@ -471,26 +471,27 @@ function SearchWords({ words }: { words: VocabWord[] }) {
       setLoading(false)
       return
     }
-    let cancelled = false
+    const ac = new AbortController()
+    // Open modal + loading immediately so the search feels instant.
+    setLoading(true)
+    setModalOpen(true)
+    setOnlineMsg(null)
+    setOnlineEntries(null)
+    setLastLookedUp(term)
     ;(async () => {
-      setLoading(true)
-      setModalOpen(true)
-      setOnlineMsg(null)
-      setOnlineEntries(null)
-      setLastLookedUp(term)
-      const result = await lookupEnglishWord(term)
-      if (cancelled) return
+      const result = await lookupEnglishWord(term, ac.signal)
+      if (ac.signal.aborted) return
       if (result.ok) {
         setOnlineEntries(result.entries)
         setOnlineMsg(null)
-      } else {
+      } else if (result.reason !== 'aborted') {
         setOnlineEntries(null)
         setOnlineMsg(result.message)
       }
       setLoading(false)
     })()
     return () => {
-      cancelled = true
+      ac.abort()
     }
   }, [params])
 
@@ -635,7 +636,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
             </div>
 
             {loading ? (
-              <p className="muted">正在查询「{lastLookedUp || q.trim()}」…</p>
+              <p className="muted">正在查询「{lastLookedUp || q.trim()}」…（约 1 秒）</p>
             ) : entry ? (
               <>
                 <div className="dict-head">
@@ -686,16 +687,31 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                   <p className="muted">该词条暂无例句，可参考上方释义。</p>
                 )}
 
-                {entry.sourceUrls[0] ? (
-                  <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
-                    来源：<a href={entry.sourceUrls[0]} target="_blank" rel="noreferrer">Wiktionary</a>
-                    {' · '}Free Dictionary API
-                  </p>
-                ) : (
-                  <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
-                    数据来自 Free Dictionary API（无需密钥）
-                  </p>
-                )}
+                <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
+                  {entry.provider === 'wiktionary' ? (
+                    <>
+                      来源：
+                      <a
+                        href={entry.sourceUrls[0] ?? `https://en.wiktionary.org/wiki/${encodeURIComponent(entry.word)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Wiktionary
+                      </a>
+                      （快速备用）
+                    </>
+                  ) : entry.sourceUrls[0] ? (
+                    <>
+                      来源：
+                      <a href={entry.sourceUrls[0]} target="_blank" rel="noreferrer">
+                        {entry.sourceUrls[0].includes('wiktionary') ? 'Wiktionary' : '词典'}
+                      </a>
+                      {' · '}Free Dictionary API
+                    </>
+                  ) : (
+                    <>数据来自 Free Dictionary API（无需密钥）</>
+                  )}
+                </p>
               </>
             ) : (
               <div className="dict-fail">
