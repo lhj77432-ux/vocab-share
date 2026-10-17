@@ -1,24 +1,31 @@
-/** Online dictionary lookup optimized for ~1s response.
- * Primary: Free Dictionary API (rich examples/audio).
- * Fallback: Wiktionary REST (fast, CORS-open) when Free Dict is slow/down.
- * Cache: in-memory + localStorage for repeat lookups.
+/** Word lookup: free Pollinations LLM (bilingual ZH/EN) first,
+ * Free Dictionary / Wiktionary race as English-only fallback.
+ * Cache: in-memory + localStorage for repeat lookups (~instant).
  */
+
+import { DEFAULT_API, loadApiSettings } from './storage'
 
 export type DictSense = {
   partOfSpeech: string
+  /** Primary gloss (usually English) — kept for favorites / older cache */
   definition: string
+  /** 中译 */
+  definitionZh?: string
+  /** 英译 */
+  definitionEn?: string
   example?: string
   synonyms: string[]
 }
 
 export type DictEntry = {
   word: string
+  /** Original user query when it differs (e.g. Chinese → English headword) */
+  query?: string
   phonetic?: string
   audio?: string
   meanings: DictSense[]
   sourceUrls: string[]
-  /** Which upstream provided this entry */
-  provider?: 'free-dictionary' | 'wiktionary' | 'cache'
+  provider?: 'llm' | 'free-dictionary' | 'wiktionary' | 'cache'
 }
 
 export type DictLookupOk = { ok: true; entries: DictEntry[]; cached?: boolean }
@@ -31,13 +38,12 @@ export type DictLookupResult = DictLookupOk | DictLookupFail
 
 const FREE_DICT = 'https://api.dictionaryapi.dev/api/v2/entries/en'
 const WIKTIONARY = 'https://en.wiktionary.org/api/rest_v1/page/definition'
-const CACHE_KEY = 'vocab-share-dict-cache-v1'
-const CACHE_MAX = 80
+const CACHE_KEY = 'vocab-share-dict-cache-v2'
+const CACHE_MAX = 100
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
-/** Soft budget for Free Dictionary before we prefer Wiktionary if ready */
 const FREE_DICT_SOFT_MS = 750
-/** Hard overall network budget */
 const TOTAL_BUDGET_MS = 1100
+const LLM_TIMEOUT_MS = 22000
 
 type CacheRecord = { at: number; entries: DictEntry[] }
 
@@ -45,6 +51,10 @@ const memoryCache = new Map<string, CacheRecord>()
 
 function hasCjk(s: string) {
   return /[\u3400-\u9fff]/.test(s)
+}
+
+function isEnglishWord(s: string) {
+  return /^[a-z][a-z'\-]*$/i.test(s)
 }
 
 function stripHtml(s: string) {
@@ -58,6 +68,10 @@ function stripHtml(s: string) {
     .replace(/&#39;/g, "'")
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function normalizeCacheKey(raw: string) {
+  return raw.trim().toLowerCase()
 }
 
 function loadDiskCache(): Record<string, CacheRecord> {
@@ -99,7 +113,7 @@ function getCached(q: string): DictEntry[] | null {
 function putCache(q: string, entries: DictEntry[]) {
   const rec: CacheRecord = {
     at: Date.now(),
-    entries: entries.map((e) => ({ ...e, provider: e.provider ?? 'cache' })),
+    entries: entries.map((e) => ({ ...e, provider: e.provider === 'llm' ? 'llm' : e.provider ?? 'cache' })),
   }
   memoryCache.set(q, rec)
   const disk = loadDiskCache()
@@ -162,6 +176,7 @@ function parseFreeDictEntry(raw: Record<string, unknown>): DictEntry | null {
       meanings.push({
         partOfSpeech: pos,
         definition,
+        definitionEn: definition,
         example,
         synonyms: syns.slice(0, 6),
       })
@@ -208,7 +223,13 @@ function parseWiktionary(word: string, data: unknown): DictEntry | null {
       if (Array.isArray(exs) && typeof exs[0] === 'string') {
         example = stripHtml(exs[0]) || undefined
       }
-      meanings.push({ partOfSpeech: pos, definition, example, synonyms: [] })
+      meanings.push({
+        partOfSpeech: pos,
+        definition,
+        definitionEn: definition,
+        example,
+        synonyms: [],
+      })
     }
   }
   if (!meanings.length) return null
@@ -334,35 +355,11 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-/**
- * Look up an English word. Prefer Free Dictionary when it answers quickly;
- * otherwise use Wiktionary so the UI stays near ~1s. Results are cached.
- */
-export async function lookupEnglishWord(
-  rawQuery: string,
+/** English-only Free Dict / Wiktionary race (~1s). */
+async function lookupDictionaryRace(
+  q: string,
   signal?: AbortSignal,
 ): Promise<DictLookupResult> {
-  const q = rawQuery.trim().toLowerCase()
-  if (!q) {
-    return { ok: false, reason: 'empty', message: '请输入要查询的英文单词。' }
-  }
-  if (hasCjk(q) || !/^[a-z][a-z'\-]*$/i.test(q)) {
-    return {
-      ok: false,
-      reason: 'not_english',
-      message: '网络词典支持英文单词查询（如 sustainable）。中文可先看下方本地词表匹配。',
-    }
-  }
-
-  if (signal?.aborted) {
-    return { ok: false, reason: 'aborted', message: '已取消查询。' }
-  }
-
-  const cached = getCached(q)
-  if (cached) {
-    return { ok: true, entries: cached, cached: true }
-  }
-
   const freeLink = linkSignals(signal)
   const wikiLink = linkSignals(signal)
 
@@ -380,7 +377,6 @@ export async function lookupEnglishWord(
   })
 
   try {
-    // Soft wait: if Free Dictionary wins within soft budget, use it.
     const soft = await Promise.race([
       freePromise.then((result) => ({ kind: 'free' as const, result })),
       sleep(FREE_DICT_SOFT_MS, signal).then(() => ({ kind: 'timeout' as const })),
@@ -388,11 +384,9 @@ export async function lookupEnglishWord(
 
     if (soft.kind === 'free' && soft.result.ok) {
       wikiLink.abort()
-      putCache(q, soft.result.entries)
       return soft.result
     }
 
-    // Soft timed out (or Free Dict failed quickly). Prefer any ready success.
     const remaining = Math.max(100, TOTAL_BUDGET_MS - FREE_DICT_SOFT_MS)
     const winner = await Promise.race([
       firstOk,
@@ -400,7 +394,6 @@ export async function lookupEnglishWord(
     ])
 
     if (winner?.result.ok) {
-      // Prefer Free Dictionary if it also finished ok (richer examples)
       if (winner.source === 'wiki') {
         const freeDone = await Promise.race([
           freePromise,
@@ -408,17 +401,14 @@ export async function lookupEnglishWord(
         ])
         if (freeDone && freeDone.ok) {
           wikiLink.abort()
-          putCache(q, freeDone.entries)
           return freeDone
         }
       } else {
         wikiLink.abort()
       }
-      putCache(q, winner.result.entries)
       return winner.result
     }
 
-    // Last chance: await whichever finishes within a short grace, then abort rest.
     const grace = await Promise.race([
       firstOk,
       freePromise.then((result) => ({ source: 'free' as const, result })),
@@ -430,11 +420,9 @@ export async function lookupEnglishWord(
     wikiLink.abort()
 
     if (grace && 'result' in grace && grace.result.ok) {
-      putCache(q, grace.result.entries)
       return grace.result
     }
 
-    // Surface the most useful failure
     const freeRes = await freePromise.catch(
       (): DictLookupResult => ({
         ok: false,
@@ -450,14 +438,8 @@ export async function lookupEnglishWord(
       }),
     )
 
-    if (freeRes.ok) {
-      putCache(q, freeRes.entries)
-      return freeRes
-    }
-    if (wikiRes.ok) {
-      putCache(q, wikiRes.entries)
-      return wikiRes
-    }
+    if (freeRes.ok) return freeRes
+    if (wikiRes.ok) return wikiRes
     if (freeRes.reason === 'not_found' || wikiRes.reason === 'not_found') {
       return {
         ok: false,
@@ -488,4 +470,248 @@ export async function lookupEnglishWord(
       message: `网络查询失败：${err instanceof Error ? err.message : '未知错误'}。可先看下方本地词表。`,
     }
   }
+}
+
+function extractJsonObject(text: string): unknown | null {
+  const trimmed = text.trim()
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    /* try fenced / embedded */
+  }
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fence?.[1]) {
+    try {
+      return JSON.parse(fence[1].trim())
+    } catch {
+      /* continue */
+    }
+  }
+  const start = trimmed.indexOf('{')
+  const end = trimmed.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1))
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function parseLlmEntry(query: string, data: unknown): DictEntry | null {
+  if (!data || typeof data !== 'object') return null
+  const obj = data as Record<string, unknown>
+  const word =
+    (typeof obj.word === 'string' && obj.word.trim()) ||
+    (typeof obj.headword === 'string' && obj.headword.trim()) ||
+    ''
+  if (!word) return null
+
+  const phonetic =
+    typeof obj.phonetic === 'string' && obj.phonetic.trim() ? obj.phonetic.trim() : undefined
+
+  const rawMeanings = Array.isArray(obj.meanings) ? obj.meanings : []
+  const meanings: DictSense[] = []
+  for (const m of rawMeanings) {
+    if (!m || typeof m !== 'object') continue
+    const row = m as Record<string, unknown>
+    const pos =
+      (typeof row.pos === 'string' && row.pos) ||
+      (typeof row.partOfSpeech === 'string' && row.partOfSpeech) ||
+      ''
+    const zh =
+      (typeof row.zh === 'string' && row.zh.trim()) ||
+      (typeof row.definitionZh === 'string' && row.definitionZh.trim()) ||
+      (typeof row.chinese === 'string' && row.chinese.trim()) ||
+      ''
+    const en =
+      (typeof row.en === 'string' && row.en.trim()) ||
+      (typeof row.definitionEn === 'string' && row.definitionEn.trim()) ||
+      (typeof row.english === 'string' && row.english.trim()) ||
+      (typeof row.definition === 'string' && row.definition.trim()) ||
+      ''
+    if (!zh && !en) continue
+    const example =
+      typeof row.example === 'string' && row.example.trim() ? row.example.trim() : undefined
+    meanings.push({
+      partOfSpeech: pos,
+      definition: en || zh,
+      definitionZh: zh || undefined,
+      definitionEn: en || undefined,
+      example,
+      synonyms: [],
+    })
+  }
+  if (!meanings.length) return null
+
+  const qTrim = query.trim()
+  return {
+    word,
+    query: qTrim && qTrim.toLowerCase() !== word.toLowerCase() ? qTrim : undefined,
+    phonetic,
+    meanings: meanings.slice(0, 8),
+    sourceUrls: [],
+    provider: 'llm',
+  }
+}
+
+async function fetchLlmLookup(query: string, signal: AbortSignal): Promise<DictLookupResult> {
+  const settings = typeof localStorage !== 'undefined' ? loadApiSettings() : { ...DEFAULT_API }
+  const base = (settings.baseUrl?.trim() || DEFAULT_API.baseUrl).replace(/\/$/, '')
+  const model = settings.model?.trim() || DEFAULT_API.model
+  const url = `${base}/chat/completions`
+
+  const system = [
+    'You are a bilingual English–Chinese dictionary for DSE / school learners.',
+    'Reply with a single JSON object only. No markdown, no commentary.',
+    'Schema:',
+    '{"word":"English headword","phonetic":"IPA or empty string","meanings":[{"pos":"n./v./adj.","zh":"中文释义","en":"English definition","example":"One short English example sentence."}]}',
+    'Rules:',
+    '- Accept Chinese OR English query.',
+    '- word must be the English lemma (for Chinese input, give the best English equivalent).',
+    '- Always fill both zh and en for each meaning (1–3 meanings).',
+    '- Keep definitions concise and accurate; one natural example per meaning when possible.',
+  ].join('\n')
+
+  const user = `Lookup query: ${query}`
+
+  const timeoutLink = linkSignals(signal)
+  const timer = setTimeout(() => timeoutLink.abort(), LLM_TIMEOUT_MS)
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      signal: timeoutLink.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(settings.apiKey?.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.2,
+      }),
+    })
+    if (!res.ok) {
+      const t = await res.text().catch(() => '')
+      if (res.status === 402) {
+        return {
+          ok: false,
+          reason: 'network',
+          message: '免费 AI 额度稍忙，请约 30 秒后再试（匿名约每 30 秒 1 次）。',
+        }
+      }
+      return {
+        ok: false,
+        reason: 'network',
+        message: `AI 释义暂时不可用（HTTP ${res.status}${t ? `: ${t.slice(0, 80)}` : ''}）。`,
+      }
+    }
+    const data = await res.json()
+    const text = data?.choices?.[0]?.message?.content
+    if (typeof text !== 'string' || !text.trim()) {
+      return { ok: false, reason: 'not_found', message: `AI 未返回「${query}」的可用释义。` }
+    }
+    const parsed = extractJsonObject(text)
+    const entry = parseLlmEntry(query, parsed)
+    if (!entry) {
+      return { ok: false, reason: 'not_found', message: `AI 返回格式异常，未能解析「${query}」。` }
+    }
+    return { ok: true, entries: [entry] }
+  } catch (err) {
+    if (signal?.aborted || timeoutLink.signal.aborted) {
+      if (signal?.aborted) {
+        return { ok: false, reason: 'aborted', message: '已取消查询。' }
+      }
+      return {
+        ok: false,
+        reason: 'network',
+        message: 'AI 释义超时，将尝试词典备用（仅英文查询）。',
+      }
+    }
+    return {
+      ok: false,
+      reason: 'network',
+      message: `AI 查询失败：${err instanceof Error ? err.message : '未知错误'}。`,
+    }
+  } finally {
+    clearTimeout(timer)
+    timeoutLink.abort()
+  }
+}
+
+/**
+ * Look up a word/phrase in English OR Chinese via free Pollinations LLM
+ * (returns 中译 + 英译). On LLM failure, English queries fall back to
+ * Free Dictionary / Wiktionary. Results are cached locally.
+ */
+export async function lookupWord(
+  rawQuery: string,
+  signal?: AbortSignal,
+): Promise<DictLookupResult> {
+  const trimmed = rawQuery.trim()
+  if (!trimmed) {
+    return { ok: false, reason: 'empty', message: '请输入要查询的英文单词或中文词。' }
+  }
+
+  const cacheKey = normalizeCacheKey(trimmed)
+  if (signal?.aborted) {
+    return { ok: false, reason: 'aborted', message: '已取消查询。' }
+  }
+
+  const cached = getCached(cacheKey)
+  if (cached) {
+    return { ok: true, entries: cached, cached: true }
+  }
+
+  const llm = await fetchLlmLookup(trimmed, signal ?? new AbortController().signal)
+  if (signal?.aborted) {
+    return { ok: false, reason: 'aborted', message: '已取消查询。' }
+  }
+  if (llm.ok) {
+    putCache(cacheKey, llm.entries)
+    // Also cache under English headword for faster re-search
+    const head = llm.entries[0]?.word?.trim().toLowerCase()
+    if (head && head !== cacheKey) putCache(head, llm.entries)
+    return llm
+  }
+
+  // Optional dictionary fallback for English-looking queries
+  const enKey = trimmed.toLowerCase()
+  if (isEnglishWord(enKey) && !hasCjk(trimmed) && llm.reason !== 'aborted') {
+    const dict = await lookupDictionaryRace(enKey, signal)
+    if (dict.ok) {
+      putCache(cacheKey, dict.entries)
+      return dict
+    }
+    if (dict.reason === 'aborted') return dict
+    // Prefer LLM’s message if dict also failed, but surface not_found from dict
+    if (dict.reason === 'not_found') return dict
+  }
+
+  if (llm.reason === 'aborted') return llm
+
+  if (hasCjk(trimmed) || !isEnglishWord(enKey)) {
+    return {
+      ok: false,
+      reason: llm.reason === 'not_found' ? 'not_found' : 'network',
+      message:
+        llm.message ||
+        `暂时无法生成「${trimmed}」的中英释义。请稍后再试，或改搜英文单词。`,
+    }
+  }
+
+  return llm
+}
+
+/** @deprecated Prefer lookupWord — kept for compatibility */
+export async function lookupEnglishWord(
+  rawQuery: string,
+  signal?: AbortSignal,
+): Promise<DictLookupResult> {
+  return lookupWord(rawQuery, signal)
 }

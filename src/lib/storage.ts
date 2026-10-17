@@ -82,6 +82,8 @@ const FAVORITES_KEY = 'vocab-share-favorites-v1'
 export type FavoriteSense = {
   partOfSpeech: string
   definition: string
+  definitionZh?: string
+  definitionEn?: string
   example?: string
 }
 
@@ -120,7 +122,13 @@ export function entryToFavorite(entry: {
   word: string
   phonetic?: string
   audio?: string
-  meanings: { partOfSpeech: string; definition: string; example?: string }[]
+  meanings: {
+    partOfSpeech: string
+    definition: string
+    definitionZh?: string
+    definitionEn?: string
+    example?: string
+  }[]
   sourceUrls: string[]
 }): FavoriteWord {
   return {
@@ -131,6 +139,8 @@ export function entryToFavorite(entry: {
     meanings: entry.meanings.slice(0, 12).map((m) => ({
       partOfSpeech: m.partOfSpeech,
       definition: m.definition,
+      definitionZh: (m as { definitionZh?: string }).definitionZh,
+      definitionEn: (m as { definitionEn?: string }).definitionEn,
       example: m.example,
     })),
     sourceUrls: entry.sourceUrls.slice(0, 4),

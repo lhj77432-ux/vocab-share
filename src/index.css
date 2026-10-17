@@ -485,6 +485,29 @@ body.dark .toast { background: #eceef5; color: #12141b; }
   font-weight: 700;
   color: var(--muted);
 }
+
+.dict-bilingual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.dict-lang-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: var(--primary);
+  border-radius: 6px;
+  padding: 1px 7px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.dict-lang-tag.en {
+  background: color-mix(in srgb, var(--primary) 55%, #334155);
+}
+
 .dict-fail .warn { margin-top: 4px; }
 
 .mask {

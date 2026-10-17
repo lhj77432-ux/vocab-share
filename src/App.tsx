@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
-import { lookupEnglishWord, type DictEntry } from './lib/dictionary'
+import { lookupWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
 import { recommendToday, weekStats, weeklySummaryText } from './lib/srs'
@@ -479,7 +479,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     setOnlineEntries(null)
     setLastLookedUp(term)
     ;(async () => {
-      const result = await lookupEnglishWord(term, ac.signal)
+      const result = await lookupWord(term, ac.signal)
       if (ac.signal.aborted) return
       if (result.ok) {
         setOnlineEntries(result.entries)
@@ -551,7 +551,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">输入英文单词后搜索，会弹出网上词典的音标、释义与例句；可收藏搜索过的词，本地词表作补充。</p>
+        <p className="muted">支持英文或中文查询；由免费 AI 生成<strong>中译</strong>与<strong>英译</strong>（含例句）。结果会缓存，重复查询更快；AI 失败时英文词可回退网上词典。可收藏搜索过的词。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -563,7 +563,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="输入英文单词，例如 recycle / sustainable"
+            placeholder="英文或中文，例如 sustainable / 可持续"
             aria-label="搜索单词"
             autoFocus
             style={{ flex: 1, minWidth: 180 }}
@@ -624,19 +624,19 @@ function SearchWords({ words }: { words: VocabWord[] }) {
           className="mask show"
           role="dialog"
           aria-modal="true"
-          aria-label="网上词典释义"
+          aria-label="单词释义"
           onClick={(e) => {
             if (e.target === e.currentTarget) closeModal()
           }}
         >
           <div className="modal dict-modal">
             <div className="modal-top">
-              <h3>网上词典</h3>
+              <h3>AI 双语释义</h3>
               <button className="icon-btn" type="button" aria-label="关闭" onClick={closeModal}>✕</button>
             </div>
 
             {loading ? (
-              <p className="muted">正在查询「{lastLookedUp || q.trim()}」…（约 1 秒）</p>
+              <p className="muted">正在用免费 AI 生成「{lastLookedUp || q.trim()}」的中译与英译…（首次约数秒，缓存后几乎瞬时）</p>
             ) : entry ? (
               <>
                 <div className="dict-head">
@@ -663,12 +663,25 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                   </div>
                 </div>
 
-                <h4 className="dict-section">释义</h4>
+                {entry.query ? (
+                  <p className="muted" style={{ marginTop: 0 }}>查询词：<b>{entry.query}</b></p>
+                ) : null}
+
+                <h4 className="dict-section">中译 · 英译</h4>
                 <ul className="dict-meanings">
                   {entry.meanings.slice(0, 8).map((m, mi) => (
                     <li key={mi}>
                       {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
-                      <span>{m.definition}</span>
+                      <div className="dict-bilingual">
+                        <div>
+                          <span className="dict-lang-tag">中译</span>
+                          <span>{m.definitionZh || (entry.provider === 'llm' ? '—' : '（词典备用暂无中译）')}</span>
+                        </div>
+                        <div>
+                          <span className="dict-lang-tag en">英译</span>
+                          <span>{m.definitionEn || m.definition}</span>
+                        </div>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -688,7 +701,9 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                 )}
 
                 <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
-                  {entry.provider === 'wiktionary' ? (
+                  {entry.provider === 'llm' || entry.provider === 'cache' ? (
+                    <>来源：免费 AI（Pollinations · 无需密钥）· 结果已本地缓存</>
+                  ) : entry.provider === 'wiktionary' ? (
                     <>
                       来源：
                       <a
@@ -698,7 +713,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                       >
                         Wiktionary
                       </a>
-                      （快速备用）
+                      （AI 失败后的英文备用）
                     </>
                   ) : entry.sourceUrls[0] ? (
                     <>
@@ -706,10 +721,10 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                       <a href={entry.sourceUrls[0]} target="_blank" rel="noreferrer">
                         {entry.sourceUrls[0].includes('wiktionary') ? 'Wiktionary' : '词典'}
                       </a>
-                      {' · '}Free Dictionary API
+                      {' · '}Free Dictionary（AI 失败后的英文备用）
                     </>
                   ) : (
-                    <>数据来自 Free Dictionary API（无需密钥）</>
+                    <>数据来自网上词典备用（无需密钥）</>
                   )}
                 </p>
               </>
@@ -785,7 +800,7 @@ function FavoritesPage() {
     <>
       <div className="card">
         <h2>搜索收藏</h2>
-        <p className="muted">这里保存你从网上词典搜索并收藏的单词（仅本机浏览器）。</p>
+        <p className="muted">这里保存你从搜索（AI 中英双语释义）收藏的单词（仅本机浏览器）。</p>
         <div className="row" style={{ marginTop: 10 }}>
           <NavLink className="btn btn-primary" to="/search">去搜索单词</NavLink>
           {favorites.length > 0 ? (
@@ -826,7 +841,7 @@ function FavoritesPage() {
                 {preview ? (
                   <p style={{ marginTop: 6 }}>
                     {preview.partOfSpeech ? <span className="dict-pos">{preview.partOfSpeech}</span> : null}
-                    {preview.definition}
+                    {preview.definitionZh || preview.definitionEn || preview.definition}
                   </p>
                 ) : null}
                 {ex ? <p className="dict-ex-line" style={{ marginTop: 8 }}>“{ex}”</p> : null}
@@ -865,12 +880,21 @@ function FavoritesPage() {
               </div>
               <button className="btn" type="button" onClick={() => playAudio(detail.audio, detail.displayWord)}>发音</button>
             </div>
-            <h4 className="dict-section">释义</h4>
+            <h4 className="dict-section">中译 · 英译</h4>
             <ul className="dict-meanings">
               {detail.meanings.slice(0, 8).map((m, mi) => (
                 <li key={mi}>
                   {m.partOfSpeech ? <span className="dict-pos">{m.partOfSpeech}</span> : null}
-                  <span>{m.definition}</span>
+                  <div className="dict-bilingual">
+                    <div>
+                      <span className="dict-lang-tag">中译</span>
+                      <span>{m.definitionZh || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="dict-lang-tag en">英译</span>
+                      <span>{m.definitionEn || m.definition}</span>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>
