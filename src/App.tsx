@@ -15,6 +15,34 @@ import {
 import type { ApiSettings, AppProgress, WordListPack } from './lib/types'
 import './index.css'
 
+const THEME_KEY = 'vocab-share-theme-v1'
+
+function toast(msg: string) {
+  let el = document.getElementById('vs-toast')
+  if (!el) {
+    el = document.createElement('div')
+    el.id = 'vs-toast'
+    el.className = 'toast'
+    document.body.appendChild(el)
+  }
+  el.textContent = msg
+  el.classList.add('show')
+  window.clearTimeout((el as HTMLElement & { _t?: number })._t)
+  ;(el as HTMLElement & { _t?: number })._t = window.setTimeout(() => el!.classList.remove('show'), 2200)
+}
+
+function useTheme() {
+  const [dark, setDark] = useState(() => {
+    try { return localStorage.getItem(THEME_KEY) === 'dark' } catch { return false }
+  })
+  useEffect(() => {
+    document.body.classList.toggle('dark', dark)
+    try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light') } catch { /* ignore */ }
+  }, [dark])
+  return [dark, setDark] as const
+}
+
+
 function usePack(): [WordListPack, (p: WordListPack) => void, boolean] {
   const [pack, setPack] = useState<WordListPack>(() => demoPack())
   const [shared, setShared] = useState(false)
@@ -39,28 +67,46 @@ function usePack(): [WordListPack, (p: WordListPack) => void, boolean] {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const [dark, setDark] = useTheme()
   return (
-    <div className="app-shell">
-      <div className="topbar">
-        <div className="brand">DSE 背单词</div>
-        <nav className="nav">
-          <NavLink to="/" end>首页</NavLink>
-          <NavLink to="/search">搜索</NavLink>
-          <NavLink to="/learn">学习</NavLink>
-          <NavLink to="/quiz">测验</NavLink>
-          <NavLink to="/sentence">造句</NavLink>
-          <NavLink to="/categories">归类</NavLink>
-          <NavLink to="/recommend">今日推荐</NavLink>
-          <NavLink to="/wrong">错词本</NavLink>
-          <NavLink to="/week">本周分析</NavLink>
-          <NavLink to="/export">导出</NavLink>
-          <NavLink to="/share">分享</NavLink>
-          <NavLink to="/settings">设置</NavLink>
-        </nav>
+    <>
+      <header className="site-header">
+        <div className="nav-bar">
+          <NavLink to="/" end className={() => 'logo'} style={{ textDecoration: 'none' }}>
+            <i>V</i>
+            <span>VocabShare</span>
+          </NavLink>
+          <div className="nav-spacer" />
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="切换深色模式"
+            onClick={() => setDark((d) => !d)}
+            title="切换主题"
+          >
+            {dark ? '☀️' : '🌙'}
+          </button>
+          <nav className="nav">
+            <NavLink to="/" end>首页</NavLink>
+            <NavLink to="/search">搜索</NavLink>
+            <NavLink to="/learn">学习</NavLink>
+            <NavLink to="/quiz">测验</NavLink>
+            <NavLink to="/sentence">造句</NavLink>
+            <NavLink to="/categories">归类</NavLink>
+            <NavLink to="/recommend">今日推荐</NavLink>
+            <NavLink to="/wrong">错词本</NavLink>
+            <NavLink to="/week">本周分析</NavLink>
+            <NavLink to="/export">导出</NavLink>
+            <NavLink to="/share">分享</NavLink>
+            <NavLink to="/settings">设置</NavLink>
+          </nav>
+        </div>
+      </header>
+      <div className="app-shell">
+        {children}
+        <p className="footer-note">实用优先 · 香港 DSE English 词表 · 进度仅保存在本机浏览器</p>
       </div>
-      {children}
-      <p className="footer-note">实用优先 · 香港 DSE English 词表 · 进度仅保存在本机浏览器</p>
-    </div>
+    </>
   )
 }
 
@@ -71,41 +117,45 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
   return (
     <>
       {shared && <div className="banner">正在查看分享词表（只读词表；你的进度仍保存在本机）</div>}
-      <div className="card">
-        <h2>{pack.title}</h2>
-        <p className="muted">面向香港 DSE English 的示范词表与练习。</p>
-        <div className="grid2" style={{ marginTop: 12 }}>
-          <div className="stat"><b>{pack.words.length}</b>词条</div>
-          <div className="stat"><b>{known}</b>较熟悉</div>
-          <div className="stat"><b>{progress.wrongIds.length}</b>错词</div>
-          <div className="stat"><b>{progress.sentences.length}</b>造句</div>
+      <section className="hero">
+        <div>
+          <h1>{pack.title}</h1>
+          <p>面向香港 DSE English 的示范词表与练习。点下方入口开始。</p>
         </div>
-      </div>
+        <div className="stats">
+          <div className="stat"><b>{pack.words.length}</b><span>词条</span></div>
+          <div className="stat"><b>{known}</b><span>较熟悉</span></div>
+          <div className="stat"><b>{progress.wrongIds.length}</b><span>错词</span></div>
+          <div className="stat"><b>{progress.sentences.length}</b><span>造句</span></div>
+        </div>
+      </section>
       <div className="card">
         <h3>搜索单词</h3>
         <p className="muted">按英文单词或中文释义查找，回车或点搜索。</p>
         <form
-          className="row"
-          style={{ marginTop: 8 }}
+          className="toolbar"
+          style={{ marginTop: 10 }}
           onSubmit={(e) => {
             e.preventDefault()
             const t = q.trim()
             navigate(t ? `/search?q=${encodeURIComponent(t)}` : '/search')
           }}
         >
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="例如 sustainable / 可持续"
-            aria-label="搜索单词"
-            style={{ flex: 1, minWidth: 180 }}
-          />
+          <div className="search-bar">
+            <span aria-hidden>🔍</span>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="例如 sustainable / 可持续"
+              aria-label="搜索单词"
+            />
+          </div>
           <button className="btn btn-primary" type="submit">搜索</button>
         </form>
       </div>
       <div className="card">
         <h3>快速入口</h3>
-        <div className="row">
+        <div className="row" style={{ marginTop: 8 }}>
           <NavLink className="btn btn-primary" to="/recommend">今日推荐</NavLink>
           <NavLink className="btn" to="/search">单词搜索</NavLink>
           <NavLink className="btn" to="/learn">开始学习</NavLink>
@@ -117,7 +167,6 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
     </>
   )
 }
-
 function Learn({
   words,
   progress,
@@ -142,35 +191,57 @@ function Learn({
   }, [startIdx])
   const w = words[i % words.length]
   if (!w) return <div className="card">词表为空</div>
+
+  const reveal = () => {
+    if (!show) {
+      setShow(true)
+      const next = recordSeen({ ...progress, byWord: { ...progress.byWord }, wrongIds: [...progress.wrongIds], dayLogs: progress.dayLogs.map((d) => ({ ...d })), sentences: [...progress.sentences] }, w.id)
+      setProgress(next)
+    } else {
+      setShow(false)
+    }
+  }
+
+  const speak = () => {
+    if (!('speechSynthesis' in window)) {
+      toast('浏览器不支持发音')
+      return
+    }
+    const u = new SpeechSynthesisUtterance(w.word)
+    u.lang = 'en-US'
+    speechSynthesis.cancel()
+    speechSynthesis.speak(u)
+  }
+
   return (
     <div className="card">
       <h2>学习 · {i + 1}/{words.length}</h2>
       <span className="tag">{w.category}</span>
-      <div className="word-big">{w.word}</div>
-      <p className="muted">{w.pos}</p>
-      <div className="reveal-box">
-        {show ? (
-          <>
-            <div><b>{w.meaningZh}</b></div>
-            <p style={{ marginBottom: 0 }}>{w.example}</p>
-          </>
-        ) : (
-          <span className="muted">先回想词义，再点「揭晓」</span>
-        )}
+      <div className="flip-wrap">
+        <div
+          className={`flip-card${show ? ' flipped' : ''}`}
+          onClick={reveal}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); reveal() } }}
+          aria-label={show ? '查看正面' : '揭晓词义'}
+        >
+          <div className="flip-face front">
+            <div className="word-big">{w.word}</div>
+            <p className="muted">{w.pos}</p>
+            <p className="flip-hint">点击卡片揭晓词义</p>
+          </div>
+          <div className="flip-face back">
+            <div><b style={{ fontSize: '1.25rem' }}>{w.meaningZh}</b></div>
+            <p className="muted" style={{ marginTop: 8 }}>{w.example}</p>
+          </div>
+        </div>
       </div>
-      <div className="row" style={{ marginTop: 12 }}>
+      <div className="row" style={{ marginTop: 12, justifyContent: 'center' }}>
+        <button className="btn" type="button" onClick={() => { setShow(false); setI((x) => (x - 1 + words.length) % words.length) }}>上一个</button>
+        <button className="btn" type="button" onClick={speak}>🔊 发音</button>
         {!show ? (
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => {
-              setShow(true)
-              const next = recordSeen({ ...progress, byWord: { ...progress.byWord }, wrongIds: [...progress.wrongIds], dayLogs: progress.dayLogs.map((d) => ({ ...d })), sentences: [...progress.sentences] }, w.id)
-              setProgress(next)
-            }}
-          >
-            揭晓
-          </button>
+          <button className="btn btn-primary" type="button" onClick={reveal}>揭晓</button>
         ) : (
           <button
             className="btn btn-primary"
@@ -183,12 +254,10 @@ function Learn({
             下一个
           </button>
         )}
-        <button className="btn" type="button" onClick={() => { setShow(false); setI((x) => (x - 1 + words.length) % words.length) }}>上一个</button>
       </div>
     </div>
   )
 }
-
 function Quiz({
   words,
   progress,
@@ -230,9 +299,8 @@ function Quiz({
             <button
               key={o.id}
               type="button"
-              className="btn"
+              className={`btn quiz-opt${correct ? ' correct' : ''}${wrong ? ' wrong' : ''}`}
               style={{
-                justifyContent: 'flex-start',
                 borderColor: correct ? 'var(--ok)' : wrong ? 'var(--bad)' : undefined,
               }}
               disabled={!!choice}
@@ -281,7 +349,7 @@ function Sentence({
   return (
     <div className="card">
       <h2>造句练习（DSE）</h2>
-      <p className="muted">用目标词写一句与校园／社会话题相关的英文句子，可请自建模型点评。</p>
+      <p className="muted">用目标词写一句与校园／社会话题相关的英文句子，可请 AI 点评（需在控制端配置接口）。</p>
       <span className="tag">{w.category}</span>
       <div className="word-big">{w.word}</div>
       <p><b>{w.meaningZh}</b> · 参考：{w.example}</p>
@@ -705,9 +773,9 @@ function SharePage({ pack }: { pack: WordListPack }) {
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(url)
-              alert('已复制链接')
+              toast('已复制链接')
             } catch {
-              alert('请手动复制链接')
+              toast('请手动复制链接')
             }
           }}
         >
@@ -719,14 +787,20 @@ function SharePage({ pack }: { pack: WordListPack }) {
 }
 
 function Settings() {
+  const [dark, setDark] = useTheme()
   return (
     <div className="card">
       <h2>设置</h2>
       <p className="muted">学习进度保存在本机浏览器，无需登录。</p>
+      <div className="row" style={{ marginTop: 12, marginBottom: 12 }}>
+        <button type="button" className="btn" onClick={() => setDark((d) => !d)}>
+          {dark ? '切换为浅色模式 ☀️' : '切换为深色模式 🌙'}
+        </button>
+      </div>
       <div className="warn">
         模型 API 与管理功能已移至独立「控制端」，不在本公开学习站配置，避免把密钥暴露在公开页面。
       </div>
-      <p className="muted">现有学习／测验／造句／归类／搜索流程不受影响。</p>
+      <p className="muted">现有学习／测验／造句／归类／搜索／导出／分享流程不受影响。</p>
     </div>
   )
 }
