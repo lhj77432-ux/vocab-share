@@ -1141,14 +1141,138 @@ function Week({
 }
 
 function ExportPage({ words, progress, title }: { words: VocabWord[]; progress: AppProgress; title: string }) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(words.map((w) => w.id)))
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const filtered = useMemo(() => {
+    const n = q.trim().toLowerCase()
+    if (!n) return words
+    return words.filter(
+      (w) =>
+        w.word.toLowerCase().includes(n) ||
+        w.meaningZh.toLowerCase().includes(n) ||
+        w.pos.toLowerCase().includes(n) ||
+        w.example.toLowerCase().includes(n),
+    )
+  }, [words, q])
+
+  const picked = useMemo(() => words.filter((w) => selected.has(w.id)), [words, selected])
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectFiltered = () => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const w of filtered) next.add(w.id)
+      return next
+    })
+  }
+
+  const clearFiltered = () => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const w of filtered) next.delete(w.id)
+      return next
+    })
+  }
+
+  const runExport = async (kind: 'excel' | 'docx' | 'pdf') => {
+    if (picked.length === 0) {
+      toast('请先选择至少一个单词')
+      return
+    }
+    setBusy(true)
+    try {
+      if (kind === 'excel') exportExcel(picked, progress, 'dse-vocab.xlsx')
+      else if (kind === 'docx') await exportDocx(picked, progress, title, 'dse-vocab.docx')
+      else await exportPdf(picked, progress, title, 'dse-vocab.pdf')
+      toast(`已导出 ${picked.length} 词`)
+    } catch (e) {
+      console.error(e)
+      toast('导出失败，请重试')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="card">
-      <h2>导出</h2>
-      <p className="muted">进度 / 错词 / 词表可导出。PDF 默认字体对中文支持有限，完整中文请用 Excel 或 Word。</p>
-      <div className="row">
-        <button className="btn btn-primary" type="button" onClick={() => exportExcel(words, progress, 'dse-vocab.xlsx')}>Excel (.xlsx)</button>
-        <button className="btn" type="button" onClick={() => exportDocx(words, progress, title, 'dse-vocab.docx')}>Word (.docx)</button>
-        <button className="btn" type="button" onClick={() => exportPdf(words, progress, title, 'dse-vocab.pdf')}>PDF</button>
+      <h2>导出 PDF / Excel / Word</h2>
+      <p className="muted">
+        勾选要导出的单词。每条包含：<b>英文单词</b>、<b>词性</b>、<b>中文意思</b>、<b>造句</b>
+        （词表例句 + 你保存过的造句）。PDF 已支持中文显示。
+      </p>
+
+      <div className="row" style={{ marginTop: 12, marginBottom: 8 }}>
+        <input
+          className="export-search"
+          placeholder="筛选单词 / 中文 / 词性…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="筛选导出单词"
+        />
+        <button className="btn" type="button" onClick={() => setSelected(new Set(words.map((w) => w.id)))}>
+          全选词表
+        </button>
+        <button className="btn" type="button" onClick={selectFiltered}>
+          全选当前筛选
+        </button>
+        <button className="btn" type="button" onClick={clearFiltered}>
+          取消当前筛选
+        </button>
+        <button className="btn" type="button" onClick={() => setSelected(new Set())}>
+          清空
+        </button>
+      </div>
+
+      <p className="muted" style={{ marginBottom: 8 }}>
+        已选 <b>{picked.length}</b> / {words.length} · 当前列表 {filtered.length}
+      </p>
+
+      <div className="export-pick-list" role="list">
+        {filtered.map((w) => {
+          const userN = progress.sentences.filter((s) => s.wordId === w.id).length
+          return (
+            <label key={w.id} className={`export-pick-row${selected.has(w.id) ? ' on' : ''}`} role="listitem">
+              <input type="checkbox" checked={selected.has(w.id)} onChange={() => toggle(w.id)} />
+              <span className="export-pick-main">
+                <b>{w.word}</b>
+                <span className="muted">{w.pos}</span>
+                <span>{w.meaningZh}</span>
+              </span>
+              <span className="export-pick-ex muted" title={w.example}>
+                造句：{w.example}
+                {userN > 0 ? ` · +${userN} 条我的造句` : ''}
+              </span>
+            </label>
+          )
+        })}
+        {filtered.length === 0 ? <p className="muted">无匹配单词</p> : null}
+      </div>
+
+      <div className="row" style={{ marginTop: 16 }}>
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={busy || picked.length === 0}
+          onClick={() => void runExport('pdf')}
+        >
+          {busy ? '导出中…' : `导出 PDF（${picked.length}）`}
+        </button>
+        <button className="btn" type="button" disabled={busy || picked.length === 0} onClick={() => void runExport('excel')}>
+          Excel (.xlsx)
+        </button>
+        <button className="btn" type="button" disabled={busy || picked.length === 0} onClick={() => void runExport('docx')}>
+          Word (.docx)
+        </button>
       </div>
     </div>
   )

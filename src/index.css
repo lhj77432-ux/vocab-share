@@ -584,3 +584,55 @@ body.dark .toast { background: #eceef5; color: #12141b; }
   flex-direction: column;
   gap: 4px;
 }
+
+/* —— Export word picker —— */
+.export-search {
+  flex: 1;
+  min-width: 180px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.export-pick-list {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 50%, var(--card));
+}
+.export-pick-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.export-pick-row:last-child { border-bottom: none; }
+.export-pick-row.on {
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+}
+.export-pick-row input[type="checkbox"] {
+  grid-row: 1 / span 2;
+  margin-top: 4px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.export-pick-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.export-pick-ex {
+  grid-column: 2;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
