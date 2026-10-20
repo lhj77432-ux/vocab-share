@@ -358,7 +358,7 @@ function Sentence({
   return (
     <div className="card">
       <h2>造句练习（DSE）</h2>
-      <p className="muted">用目标词写一句与校园／社会话题相关的英文句子，可请免费 AI 点评（默认已接 Pollinations）。</p>
+      <p className="muted">用目标词写一句与校园／社会话题相关的英文句子，可请免费 AI 点评（默认 Puter · Gemini Flash-Lite）。</p>
       <span className="tag">{w.category}</span>
       <div className="word-big">{w.word}</div>
       <p><b>{w.meaningZh}</b> · 参考：{w.example}</p>
@@ -702,7 +702,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
 
                 <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
                   {entry.provider === 'llm' || entry.provider === 'cache' ? (
-                    <>来源：免费 AI（Pollinations · 无需密钥）· 结果已本地缓存</>
+                    <>来源：免费 AI（Puter · Gemini 3.1 Flash-Lite · 开发者无需密钥）· 结果已本地缓存</>
                   ) : entry.provider === 'wiktionary' ? (
                     <>
                       来源：
@@ -1332,11 +1332,11 @@ function Settings() {
         </button>
       </div>
       <p style={{ marginTop: 8 }}>
-        <b>当前：免费 Pollinations</b>
-        <span className="muted">（gpt-oss-20b · 无需密钥）</span>
+        <b>当前：免费 Puter.js</b>
+        <span className="muted">（google/gemini-3.1-flash-lite · 开发者无需密钥）</span>
       </p>
       <p className="muted" style={{ marginTop: 6 }}>
-        默认已接免费模型 Pollinations；小模型训好后再换。匿名约每 30 秒可请求 1 次，遇限流稍候再试。
+        默认经 Puter 调用 Gemini 3.1 Flash-Lite（User-Pays：首次可能需登录 Puter，费用由用户账户额度承担，站点开发者不付 API 费）。失败时自动回退 Pollinations。小模型训好后再换自建推理。
       </p>
       <p className="muted">现有学习／测验／造句／归类／搜索／收藏／导出／分享流程不受影响。</p>
     </div>

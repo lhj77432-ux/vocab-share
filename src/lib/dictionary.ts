@@ -1,9 +1,10 @@
-/** Word lookup: free Pollinations LLM (bilingual ZH/EN) first,
- * Free Dictionary / Wiktionary race as English-only fallback.
+/** Word lookup: Puter.js free AI (bilingual ZH/EN) first,
+ * Pollinations silent fallback, then Free Dictionary / Wiktionary for English.
  * Cache: in-memory + localStorage for repeat lookups (~instant).
  */
 
-import { DEFAULT_API, loadApiSettings } from './storage'
+import { chatCompletion } from './api'
+import { loadApiSettings } from './storage'
 
 export type DictSense = {
   partOfSpeech: string
@@ -557,10 +558,7 @@ function parseLlmEntry(query: string, data: unknown): DictEntry | null {
 }
 
 async function fetchLlmLookup(query: string, signal: AbortSignal): Promise<DictLookupResult> {
-  const settings = typeof localStorage !== 'undefined' ? loadApiSettings() : { ...DEFAULT_API }
-  const base = (settings.baseUrl?.trim() || DEFAULT_API.baseUrl).replace(/\/$/, '')
-  const model = settings.model?.trim() || DEFAULT_API.model
-  const url = `${base}/chat/completions`
+  const settings = typeof localStorage !== 'undefined' ? loadApiSettings() : undefined
 
   const system = [
     'You are a bilingual English–Chinese dictionary for DSE / school learners.',
@@ -580,39 +578,12 @@ async function fetchLlmLookup(query: string, signal: AbortSignal): Promise<DictL
   const timer = setTimeout(() => timeoutLink.abort(), LLM_TIMEOUT_MS)
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      signal: timeoutLink.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(settings.apiKey?.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        temperature: 0.2,
-      }),
-    })
-    if (!res.ok) {
-      const t = await res.text().catch(() => '')
-      if (res.status === 402) {
-        return {
-          ok: false,
-          reason: 'network',
-          message: '免费 AI 额度稍忙，请约 30 秒后再试（匿名约每 30 秒 1 次）。',
-        }
-      }
-      return {
-        ok: false,
-        reason: 'network',
-        message: `AI 释义暂时不可用（HTTP ${res.status}${t ? `: ${t.slice(0, 80)}` : ''}）。`,
-      }
-    }
-    const data = await res.json()
-    const text = data?.choices?.[0]?.message?.content
+    const text = await chatCompletion(
+      settings ?? { baseUrl: 'puter', apiKey: '', model: 'google/gemini-3.1-flash-lite' },
+      'vocab',
+      user,
+      { signal: timeoutLink.signal, temperature: 0.2, systemOverride: system },
+    )
     if (typeof text !== 'string' || !text.trim()) {
       return { ok: false, reason: 'not_found', message: `AI 未返回「${query}」的可用释义。` }
     }
@@ -623,31 +594,31 @@ async function fetchLlmLookup(query: string, signal: AbortSignal): Promise<DictL
     }
     return { ok: true, entries: [entry] }
   } catch (err) {
-    if (signal?.aborted || timeoutLink.signal.aborted) {
-      if (signal?.aborted) {
-        return { ok: false, reason: 'aborted', message: '已取消查询。' }
-      }
+    if (signal?.aborted) {
+      return { ok: false, reason: 'aborted', message: '已取消查询。' }
+    }
+    if (timeoutLink.signal.aborted && !signal?.aborted) {
       return {
         ok: false,
         reason: 'network',
         message: 'AI 释义超时，将尝试词典备用（仅英文查询）。',
       }
     }
+    const msg = err instanceof Error ? err.message : String(err)
     return {
       ok: false,
       reason: 'network',
-      message: `AI 查询失败：${err instanceof Error ? err.message : '未知错误'}。`,
+      message: `AI 查询失败：${msg || '未知错误'}。`,
     }
   } finally {
     clearTimeout(timer)
-    timeoutLink.abort()
   }
 }
 
 /**
- * Look up a word/phrase in English OR Chinese via free Pollinations LLM
- * (returns 中译 + 英译). On LLM failure, English queries fall back to
- * Free Dictionary / Wiktionary. Results are cached locally.
+ * Look up a word/phrase in English OR Chinese via Puter.js free AI
+ * (returns 中译 + 英译; Pollinations as silent AI fallback). On LLM failure,
+ * English queries fall back to Free Dictionary / Wiktionary. Results are cached locally.
  */
 export async function lookupWord(
   rawQuery: string,
