@@ -5,11 +5,35 @@ const PROGRESS_KEY = 'vocab-share-progress-v1'
 const API_KEY = 'vocab-share-api-v1'
 const CUSTOM_LISTS_KEY = 'vocab-share-lists-v1'
 
-/** Default free OpenAI-compatible endpoint (no signup / no key). */
+/** Sentinel baseUrl: use Puter.js in-browser (User-Pays, no developer API key). */
+export const PUTER_BASE = 'puter'
+
+/** Default free path via Puter.js — no API key in code; user may sign in to Puter on first use. */
 export const DEFAULT_API: ApiSettings = {
+  baseUrl: PUTER_BASE,
+  apiKey: '',
+  model: 'google/gemini-3.1-flash-lite',
+}
+
+/** Silent OpenAI-compatible fallback when Puter is unavailable. */
+export const POLLINATIONS_FALLBACK: ApiSettings = {
   baseUrl: 'https://text.pollinations.ai/v1',
   apiKey: '',
   model: 'gpt-oss-20b',
+}
+
+export function isPuterSettings(s: ApiSettings): boolean {
+  const base = (s.baseUrl ?? '').trim().toLowerCase()
+  return !base || base === PUTER_BASE || base === 'puter://' || base.startsWith('puter:')
+}
+
+function isLegacyFreePollinations(s: ApiSettings): boolean {
+  const base = (s.baseUrl ?? '').trim().toLowerCase()
+  const model = (s.model ?? '').trim()
+  const key = (s.apiKey ?? '').trim()
+  if (key) return false
+  if (!base.includes('pollinations.ai')) return false
+  return !model || model === 'gpt-oss-20b'
 }
 
 export function demoPack(): WordListPack {
@@ -38,8 +62,8 @@ export function loadApiSettings(): ApiSettings {
     const raw = localStorage.getItem(API_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as ApiSettings
-      // Empty baseUrl = unset → use free default (existing installs without manual clear)
-      if (!parsed.baseUrl?.trim()) {
+      // Empty / legacy free Pollinations → migrate to Puter default
+      if (!parsed.baseUrl?.trim() || isLegacyFreePollinations(parsed)) {
         return { ...DEFAULT_API }
       }
       return {
