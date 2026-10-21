@@ -5,7 +5,16 @@ import { chatCompletion } from './lib/api'
 import { lookupWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
-import { recommendToday, weekStats, weeklySummaryText } from './lib/srs'
+import { weekStats, weeklySummaryText } from './lib/srs'
+import {
+  DEFAULT_DAILY_COUNT,
+  fetchDailyAiRecommend,
+  loadDailyCountInput,
+  parseDailyCountInput,
+  saveDailyCountInput,
+  type DailyRecommendResult,
+  type RecommendItem,
+} from './lib/aiRecommend'
 import { buildShareUrl, decodeSharePack, shareCodeFromId } from './lib/share'
 import {
   demoPack,
@@ -983,50 +992,201 @@ function Recommend({
   progress: AppProgress
   api: ApiSettings
 }) {
-  const list = useMemo(() => recommendToday(words, progress, 12), [words, progress])
+  const [countInput, setCountInput] = useState(() => loadDailyCountInput())
+  const [result, setResult] = useState<DailyRecommendResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [explain, setExplain] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [planBusy, setPlanBusy] = useState(false)
+
+  const list: RecommendItem[] = result?.items ?? []
+
+  const runRecommend = useCallback(
+    async (forceRefresh: boolean) => {
+      const count = parseDailyCountInput(countInput)
+      saveDailyCountInput(countInput.trim() === '' ? String(DEFAULT_DAILY_COUNT) : countInput)
+      setLoading(true)
+      setError('')
+      try {
+        const res = await fetchDailyAiRecommend({
+          words,
+          progress,
+          api,
+          count,
+          forceRefresh,
+        })
+        setResult(res)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setLoading(false)
+      }
+    },
+    [api, countInput, progress, words],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const count = parseDailyCountInput(loadDailyCountInput())
+      setLoading(true)
+      setError('')
+      try {
+        const res = await fetchDailyAiRecommend({
+          words,
+          progress,
+          api,
+          count,
+          forceRefresh: false,
+        })
+        if (!cancelled) setResult(res)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Initial load / when word pack or progress identity changes enough to matter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [words, api])
+
+  const sourceLabel =
+    result?.source === 'ai'
+      ? '外接模型推荐 · 仅 DSE 范围'
+      : result?.source === 'local'
+        ? '本地推荐（模型不可用时的回退）· 仅 DSE 范围'
+        : '仅 DSE 范围'
 
   return (
     <div className="card">
       <h2>今日推荐</h2>
-      <p className="muted">按生疏度、错词、间隔复习规则排序（可再请模型解释）。</p>
-      <table className="table">
-        <thead><tr><th>#</th><th>单词</th><th>意思</th><th>为何推荐</th></tr></thead>
-        <tbody>
-          {list.map((item, i) => (
-            <tr key={item.word.id}>
-              <td>{i + 1}</td>
-              <td><b>{item.word.word}</b></td>
-              <td>{item.word.meaningZh}</td>
-              <td>{item.reasons.join('；')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="row" style={{ marginTop: 10 }}>
-        <NavLink className="btn btn-primary" to="/learn">去学习</NavLink>
+      <p className="muted">
+        由外接模型推荐今日背单词（仅 DSE 范围词表，不会编造课外词）。可自己输入每天背几个；同一天同数量会缓存，点「重新推荐」可再请模型挑。
+      </p>
+
+      <div className="row" style={{ marginTop: 10, marginBottom: 8 }}>
+        <label htmlFor="daily-count-input" style={{ margin: 0 }}>
+          每天背几个
+        </label>
+        <input
+          id="daily-count-input"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={countInput}
+          onChange={(e) => {
+            const v = e.target.value
+            // Allow free typing (digits / empty); persist as typed
+            if (v === '' || /^\d{1,3}$/.test(v)) {
+              setCountInput(v)
+              saveDailyCountInput(v)
+            }
+          }}
+          onBlur={() => {
+            const clamped = parseDailyCountInput(countInput)
+            const next = String(clamped)
+            setCountInput(next)
+            saveDailyCountInput(next)
+          }}
+          placeholder="自己输入，例如 12"
+          aria-label="每天背多少个英文单词（自己输入）"
+          style={{ width: 120, flex: '0 0 auto' }}
+        />
+        <span className="muted">个（自己输入；实际按 1–100 调用模型）</span>
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={loading}
+          onClick={() => runRecommend(false)}
+        >
+          {loading ? '推荐中…' : '生成今日推荐'}
+        </button>
         <button
           className="btn"
           type="button"
-          disabled={busy}
+          disabled={loading}
+          onClick={() => runRecommend(true)}
+        >
+          重新推荐
+        </button>
+      </div>
+
+      <p className="muted" style={{ marginBottom: 8 }}>
+        {loading && !list.length
+          ? '正在请外接模型从 DSE 词表中挑选…'
+          : result
+            ? `${sourceLabel} · 今日 ${result.date} · ${list.length} 词`
+            : sourceLabel}
+      </p>
+      {error ? <p className="warn">{error}</p> : null}
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>单词</th>
+            <th>意思</th>
+            <th>为何推荐</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.length === 0 && !loading ? (
+            <tr>
+              <td colSpan={4} className="muted">
+                暂无推荐，请输入数量后点「生成今日推荐」。
+              </td>
+            </tr>
+          ) : (
+            list.map((item, i) => (
+              <tr key={item.word.id}>
+                <td>{i + 1}</td>
+                <td>
+                  <b>{item.word.word}</b>
+                </td>
+                <td>{item.word.meaningZh}</td>
+                <td>{item.reasons.join('；')}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <NavLink className="btn btn-primary" to="/learn">
+          去学习
+        </NavLink>
+        <button
+          className="btn"
+          type="button"
+          disabled={planBusy || !list.length}
           onClick={async () => {
-            setBusy(true)
+            setPlanBusy(true)
             try {
-              const payload = list.map((x) => `${x.word.word}: ${x.reasons.join(',')}`).join('\n')
-              const reply = await chatCompletion(api, 'analysis', `根据今日推荐列表，用中文给学习计划（今日重点与复习顺序）：\n${payload}`)
+              const payload = list
+                .map((x) => `${x.word.word}: ${x.reasons.join(',')}`)
+                .join('\n')
+              const reply = await chatCompletion(
+                api,
+                'analysis',
+                `根据今日推荐列表（仅 DSE 范围），用中文给学习计划（今日重点与复习顺序）：\n${payload}`,
+              )
               setExplain(reply)
             } catch (e) {
               setExplain(e instanceof Error ? e.message : String(e))
             } finally {
-              setBusy(false)
+              setPlanBusy(false)
             }
           }}
         >
-          AI 解释为何这样排
+          AI 学习计划
         </button>
       </div>
-      {explain && <pre style={{ whiteSpace: 'pre-wrap', marginTop: 12, font: 'inherit' }}>{explain}</pre>}
+      {explain && (
+        <pre style={{ whiteSpace: 'pre-wrap', marginTop: 12, font: 'inherit' }}>{explain}</pre>
+      )}
     </div>
   )
 }
