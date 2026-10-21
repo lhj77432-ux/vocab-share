@@ -94,10 +94,10 @@ function rebuildFromCache(
   words: VocabWord[],
 ): DailyRecommendResult | null {
   const byId = new Map(words.map((w) => [w.id, w]))
-  const byWord = new Map(words.map((w) => [w.word.toLowerCase(), w]))
   const items: RecommendItem[] = []
   for (const p of cache.picks) {
-    const w = byId.get(p.id) ?? byWord.get(p.id.toLowerCase())
+    // Cache may only surface pack words — drop anything not exact in current DSE list
+    const w = byId.get(p.id)
     if (!w) continue
     items.push({ word: w, reasons: [p.reason || '今日推荐'] })
   }
@@ -193,10 +193,16 @@ function extractJsonArray(text: string): unknown[] | null {
   return null
 }
 
+/**
+ * Strict DSE-only gate: keep a pick only if id or exact spelling matches the
+ * local pack. Invented / near-miss spellings are dropped — never shown.
+ * Display always uses the VocabWord from the pack (never model-invented text).
+ */
 function mapModelPicksToDse(
   raw: unknown[],
   words: VocabWord[],
   count: number,
+  allowedIds?: Set<string>,
 ): RecommendItem[] {
   const byWord = new Map(words.map((w) => [w.word.toLowerCase(), w]))
   const byId = new Map(words.map((w) => [w.id, w]))
@@ -216,21 +222,39 @@ function mapModelPicksToDse(
     const reason =
       (typeof obj.reason === 'string' && obj.reason.trim()) ||
       (typeof obj.why === 'string' && obj.why.trim()) ||
-      (typeof obj.meaningZh === 'string' && obj.meaningZh.trim()) ||
       '模型推荐'
 
     let w: VocabWord | undefined
-    if (idStr && byId.has(idStr)) w = byId.get(idStr)
-    if (!w && wordStr) w = byWord.get(wordStr.toLowerCase())
-    // fuzzy: allow minor casing / spacing
-    if (!w && wordStr) {
-      const key = wordStr.toLowerCase().replace(/\s+/g, ' ').trim()
-      w = byWord.get(key)
+
+    // Prefer exact id from DSE pack (and preferably from the candidate pool)
+    if (idStr && byId.has(idStr)) {
+      const byIdWord = byId.get(idStr)!
+      if (!allowedIds || allowedIds.has(idStr)) {
+        w = byIdWord
+      }
     }
-    if (!w) continue // drop invented / out-of-DSE words
+
+    // Else exact spelling match only (case-insensitive, no fuzzy edit distance)
+    if (!w && wordStr) {
+      const key = wordStr.toLowerCase()
+      const hit = byWord.get(key)
+      if (hit && (!allowedIds || allowedIds.has(hit.id))) {
+        w = hit
+      }
+    }
+
+    // If both id + word given and disagree with pack, drop (do not trust invent)
+    if (w && wordStr) {
+      if (w.word.toLowerCase() !== wordStr.toLowerCase()) {
+        // id won but model spelled a different word — still OK if id is valid pack entry
+        // (we display pack spelling). If only word matched path, already exact.
+      }
+    }
+
+    if (!w) continue // drop invented / unverified words — never show to user
     if (seen.has(w.id)) continue
     seen.add(w.id)
-    items.push({ word: w, reasons: [reason] })
+    items.push({ word: w, reasons: [reason.slice(0, 80)] })
   }
   return items
 }
@@ -285,11 +309,11 @@ export async function fetchDailyAiRecommend(opts: {
 
   const system = [
     '你是香港 DSE English 背单词助教。',
-    '只能从用户提供的候选词表（DSE 范围）中挑选今日要背的单词。',
-    '严禁编造候选列表之外的任何单词。',
+    'HARD RULE: 只能从用户提供的候选词表中挑选。word 必须与候选里的英文原词完全一致（可大小写不同），id 必须是候选里的 id。',
+    '严禁编造、联想、近义词替换或输出候选列表之外的任何单词。若不确定，跳过，不要瞎编。',
     '只输出 JSON 数组，不要 markdown，不要其它说明。',
-    '数组元素格式：{"id":"词条id","word":"英文原词","reason":"一句中文推荐理由"}',
-    `恰好挑选 ${count} 个（若候选不足则能选几个选几个）。`,
+    '数组元素格式：{"id":"词条id","word":"与候选完全一致的英文原词","reason":"一句中文推荐理由"}',
+    `恰好挑选 ${count} 个（若候选不足则能选几个选几个，宁可少也不要编造）。`,
     '优先：错词、生疏、久未复习、尚未学习；适当覆盖不同类别，避免全是同一类。',
   ].join('\n')
 
@@ -309,9 +333,11 @@ export async function fetchDailyAiRecommend(opts: {
     })
     const arr = extractJsonArray(reply)
     if (!arr) throw new Error('模型未返回可解析 JSON')
-    let items = mapModelPicksToDse(arr, words, count)
+    const allowedIds = new Set(candidates.map((c) => c.word.id))
+    // Strict: only exact id/spelling in DSE pack ∩ candidate pool; drop fakes
+    let items = mapModelPicksToDse(arr, words, count, allowedIds)
 
-    // If model returned too few valid DSE words, top up from local SRS (still DSE-only)
+    // If too few verified picks, refill from local recommendToday (pack-only)
     if (items.length < count) {
       const have = new Set(items.map((x) => x.word.id))
       for (const row of localFallback(words, progress, count * 2)) {
@@ -320,12 +346,16 @@ export async function fetchDailyAiRecommend(opts: {
         have.add(row.word.id)
         items.push({
           word: row.word,
-          reasons: row.reasons.length ? row.reasons : ['本地补齐'],
+          reasons: row.reasons.length ? row.reasons : ['本地补齐（过滤编造词后）'],
         })
       }
     }
 
-    if (!items.length) throw new Error('模型挑选结果为空或均不在 DSE 词表')
+    // Final safety: every item must exist in pack by id
+    const packIds = new Set(words.map((w) => w.id))
+    items = items.filter((x) => packIds.has(x.word.id))
+
+    if (!items.length) throw new Error('模型挑选结果为空或均未通过 DSE 词表校验')
 
     items = items.slice(0, count)
     const result: DailyRecommendResult = {
