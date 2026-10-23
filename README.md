@@ -4,7 +4,9 @@
 
 **线上地址：** https://lhj77432-ux.github.io/vocab-share/
 
-功能：学习／测验／错词本／造句／归类／今日推荐／本周分析／导出 PDF·Word·Excel／分享链接；设置里可接「自建模型 API」（OpenAI 兼容，非官方 DeepSeek 聊天）。
+站内核心词表约 500+ 词（DSE 写作／话题向）。每日推荐、搜索（中译＋英译）、一键造句默认走免费大模型 Puter.js `google/gemini-3.1-flash-lite`（失败静默回退 Pollinations）；推荐只从站内 DSE 词表挑选，不编假词。
+
+其它功能：学习／测验／错词本／归类／本周分析／导出 PDF·Word·Excel／分享链接。
 
 ## 本地
 
