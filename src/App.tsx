@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
+import { generateAiSentence } from './lib/aiSentence'
 import { lookupWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
@@ -121,7 +122,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       </header>
       <div className="app-shell">
         {children}
-        <p className="footer-note">实用优先 · 香港 DSE English 词表 · 进度仅保存在本机浏览器</p>
+        <p className="footer-note">实用优先 · 香港 DSE English 核心词表 · 进度仅保存在本机浏览器</p>
       </div>
     </>
   )
@@ -137,7 +138,7 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
       <section className="hero">
         <div>
           <h1>{pack.title}</h1>
-          <p>面向香港 DSE English 的示范词表与练习。点下方入口开始。</p>
+          <p>面向香港 DSE English 的核心词表与练习；每日推荐／搜索／造句均接免费大模型。点下方入口开始。</p>
         </div>
         <div className="stats">
           <div className="stat"><b>{pack.words.length}</b><span>词条</span></div>
@@ -148,7 +149,7 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
       </section>
       <div className="card">
         <h3>搜索单词</h3>
-        <p className="muted">查网上英文词典释义；也可用中文在本地词表里筛。</p>
+        <p className="muted">搜索走免费大模型给出中译＋英译；也可用中文在本地 DSE 词表里筛。</p>
         <form
           className="toolbar"
           style={{ marginTop: 10 }}
@@ -364,10 +365,20 @@ function Sentence({
   const w = words[idx % words.length]
   if (!w) return null
 
+  const cloneProgress = () => ({
+    ...progress,
+    byWord: { ...progress.byWord },
+    wrongIds: [...progress.wrongIds],
+    dayLogs: progress.dayLogs.map((d) => ({ ...d })),
+    sentences: [...progress.sentences],
+  })
+
   return (
     <div className="card">
       <h2>造句练习（DSE）</h2>
-      <p className="muted">用目标词写一句与校园／社会话题相关的英文句子，可请免费 AI 点评（默认 Puter · Gemini Flash-Lite）。</p>
+      <p className="muted">
+        一键连免费大模型（默认 Puter · Gemini Flash-Lite）思考造句；也可自己写，再请 AI 点评。失败时会静默改走备用通道。
+      </p>
       <span className="tag">{w.category}</span>
       <div className="word-big">{w.word}</div>
       <p><b>{w.meaningZh}</b> · 参考：{w.example}</p>
@@ -377,13 +388,29 @@ function Sentence({
         <button
           className="btn btn-primary"
           type="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setFeedback('正在请免费大模型造句…')
+            try {
+              const sentence = await generateAiSentence(w, api)
+              setText(sentence)
+              setFeedback('已填入模型造句，可直接保存或再改。首次可能需完成 Puter 登录。')
+            } catch (e) {
+              setFeedback(e instanceof Error ? e.message : String(e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {busy ? '模型思考中…' : 'AI 造句'}
+        </button>
+        <button
+          className="btn"
+          type="button"
           onClick={() => {
             if (!text.trim()) return
-            const next = addSentence(
-              { ...progress, byWord: { ...progress.byWord }, wrongIds: [...progress.wrongIds], dayLogs: progress.dayLogs.map((d) => ({ ...d })), sentences: [...progress.sentences] },
-              w.id,
-              text.trim(),
-            )
+            const next = addSentence(cloneProgress(), w.id, text.trim())
             setProgress(next)
             setFeedback('已保存到本机。')
             setText('')
@@ -399,7 +426,7 @@ function Sentence({
           onClick={async () => {
             if (!text.trim()) return
             setBusy(true)
-            setFeedback('请求模型中…')
+            setFeedback('请求模型点评中…')
             try {
               const reply = await chatCompletion(
                 api,
@@ -597,7 +624,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
       <div className="card">
         <h3>本地词表{normalizeQuery(q) ? ` · ${localResults.length} 个` : ''}</h3>
         {!normalizeQuery(q) ? (
-          <p className="muted">共 {words.length} 个示范词条可筛选；支持英文或中文关键词。</p>
+          <p className="muted">共 {words.length} 个 DSE 词条可筛选；支持英文或中文关键词。</p>
         ) : localResults.length === 0 ? (
           <p className="muted">本地词表没有匹配「{q.trim()}」。</p>
         ) : (

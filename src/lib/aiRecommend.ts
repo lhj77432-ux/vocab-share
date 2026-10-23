@@ -5,10 +5,10 @@ import { todayStr } from './storage'
 import type { ApiSettings, AppProgress } from './types'
 
 export const DAILY_COUNT_KEY = 'vocab-share-daily-count-v1'
-export const DAILY_RECOMMEND_CACHE_KEY = 'vocab-share-daily-ai-recommend-v1'
+export const DAILY_RECOMMEND_CACHE_KEY = 'vocab-share-daily-ai-recommend-v2'
 export const DEFAULT_DAILY_COUNT = 12
 export const MIN_DAILY_COUNT = 1
-export const MAX_DAILY_COUNT = 100
+export const MAX_DAILY_COUNT = 200
 
 export type RecommendSource = 'ai' | 'local'
 
