@@ -636,3 +636,117 @@ body.dark .toast { background: #eceef5; color: #12141b; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* —— Free AI connector (plugin-style) —— */
+.connector-panel {
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+}
+.connector-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-2));
+}
+.connector-panel--full { padding: 24px; }
+.connector-head { margin-bottom: 12px; }
+.connector-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.connector-plugin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 99px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+}
+.connector-status-chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--border));
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, var(--card));
+}
+.connector-form { display: flex; flex-direction: column; gap: 10px; }
+.connector-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--primary) 4%, var(--card));
+  outline: none;
+}
+.connector-input:focus {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+.connector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.connector-error {
+  margin-top: 10px;
+  color: var(--bad);
+  font-size: 0.9rem;
+}
+.connector-result {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--primary) 5%, var(--card));
+}
+.connector-result-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.connector-word {
+  font-size: 1.35rem;
+  margin-right: 8px;
+}
+.connector-dl {
+  display: grid;
+  gap: 10px;
+}
+.connector-dl dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.connector-dl dd { font-size: 0.95rem; }
+.connector-sentence {
+  font-style: italic;
+  line-height: 1.55;
+}
+.connector-hint { margin-top: 10px; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { HashRouter, NavLink, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom'
+import { HashRouter, NavLink, Route, Routes, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
 import { FREE_CONNECTOR_LABEL } from './lib/freeAiConnector'
+import { AiConnectorPanel } from './components/AiConnectorPanel'
 import { lookupWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
@@ -106,6 +107,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </button>
           <nav className="nav">
             <NavLink to="/" end>首页</NavLink>
+            <NavLink to="/connector">连接器</NavLink>
             <NavLink to="/search">搜索</NavLink>
             <NavLink to="/favorites">收藏</NavLink>
             <NavLink to="/learn">学习</NavLink>
@@ -131,15 +133,13 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean; progress: AppProgress }) {
   const known = Object.values(progress.byWord).filter((x) => (x.ease ?? 0) >= 3).length
-  const navigate = useNavigate()
-  const [q, setQ] = useState('')
   return (
     <>
       {shared && <div className="banner">正在查看分享词表（只读词表；你的进度仍保存在本机）</div>}
       <section className="hero">
         <div>
           <h1>{pack.title}</h1>
-          <p>面向香港 DSE English 的核心词表与练习；每日推荐／搜索／造句均接免费大模型。点下方入口开始。</p>
+          <p>主能力是<strong>免费 AI 连接器</strong>（像插件）：任意输入 → 自动接模型 → 生词／中译／英译／造句。本地 DSE 词表仍可学习／推荐。</p>
         </div>
         <div className="stats">
           <div className="stat"><b>{pack.words.length}</b><span>词条</span></div>
@@ -147,38 +147,15 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
           <div className="stat"><b>{progress.wrongIds.length}</b><span>错词</span></div>
           <div className="stat"><b>{progress.sentences.length}</b><span>造句</span></div>
         </div>
-        <p className="muted" style={{ marginTop: 10 }}>
-          免费 AI 连接器已自动接入：{FREE_CONNECTOR_LABEL}（失败静默回退 Pollinations）。搜索／今日推荐／造句均走此链路，不用选手动模型。
-        </p>
       </section>
-      <div className="card">
-        <h3>搜索单词</h3>
-        <p className="muted">搜索走免费大模型给出中译＋英译；也可用中文在本地 DSE 词表里筛。</p>
-        <form
-          className="toolbar"
-          style={{ marginTop: 10 }}
-          onSubmit={(e) => {
-            e.preventDefault()
-            const t = q.trim()
-            navigate(t ? `/search?q=${encodeURIComponent(t)}` : '/search')
-          }}
-        >
-          <div className="search-bar">
-            <span aria-hidden>🔍</span>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="例如 sustainable（网上词典）"
-              aria-label="搜索单词"
-            />
-          </div>
-          <button className="btn btn-primary" type="submit">搜索</button>
-        </form>
-      </div>
+
+      <AiConnectorPanel variant="home" />
+
       <div className="card">
         <h3>快速入口</h3>
         <div className="row" style={{ marginTop: 8 }}>
-          <NavLink className="btn btn-primary" to="/recommend">今日推荐</NavLink>
+          <NavLink className="btn btn-primary" to="/connector">连接器</NavLink>
+          <NavLink className="btn" to="/recommend">今日推荐</NavLink>
           <NavLink className="btn" to="/search">单词搜索</NavLink>
           <NavLink className="btn" to="/favorites">我的收藏</NavLink>
           <NavLink className="btn" to="/learn">开始学习</NavLink>
@@ -591,7 +568,8 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">任意输入英文／中文 → 网站免费 AI 连接器（{FREE_CONNECTOR_LABEL}）实时生成<strong>生词</strong>、<strong>中译</strong>、<strong>英译</strong>与<strong>例句</strong>。无需填 API key。结果会缓存；失败时英文可回退网上词典。</p>
+        <p className="muted">与首页<strong>免费 AI 连接器</strong>同一自动链路（{FREE_CONNECTOR_LABEL}）：任意英文／中文 → 生词／中译／英译／例句。无需填 key；结果缓存；失败时可回退网上词典。也可用下方本地 DSE 词表筛选。</p>
+        <p className="muted" style={{ marginTop: 6 }}>想要更像插件的一键面板？打开 <NavLink to="/connector">连接器</NavLink>。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -1511,6 +1489,24 @@ function SharePage({ pack }: { pack: WordListPack }) {
   )
 }
 
+function ConnectorPage() {
+  return (
+    <>
+      <AiConnectorPanel variant="full" />
+      <div className="card">
+        <h3>其它仍保留的功能</h3>
+        <p className="muted">学习／收藏／今日推荐／本地 DSE 词表／测验／错词本／导出／分享均未删除。推荐路径仍只从站内 DSE 词表选词。</p>
+        <div className="row" style={{ marginTop: 8 }}>
+          <NavLink className="btn" to="/recommend">今日推荐</NavLink>
+          <NavLink className="btn" to="/learn">学习</NavLink>
+          <NavLink className="btn" to="/search">搜索</NavLink>
+          <NavLink className="btn" to="/settings">设置</NavLink>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function Settings() {
   const [dark, setDark] = useTheme()
   return (
@@ -1548,6 +1544,7 @@ function AppInner() {
     <Shell>
       <Routes>
         <Route path="/" element={<Home pack={pack} shared={shared} progress={progress} />} />
+        <Route path="/connector" element={<ConnectorPage />} />
         <Route path="/search" element={<SearchWords words={pack.words} />} />
         <Route path="/favorites" element={<FavoritesPage />} />
         <Route path="/learn" element={<Learn words={pack.words} progress={progress} setProgress={persist} />} />
