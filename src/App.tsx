@@ -3,6 +3,7 @@ import { HashRouter, NavLink, Route, Routes, useNavigate, useSearchParams } from
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
+import { FREE_CONNECTOR_LABEL } from './lib/freeAiConnector'
 import { lookupWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
@@ -146,6 +147,9 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
           <div className="stat"><b>{progress.wrongIds.length}</b><span>错词</span></div>
           <div className="stat"><b>{progress.sentences.length}</b><span>造句</span></div>
         </div>
+        <p className="muted" style={{ marginTop: 10 }}>
+          免费 AI 连接器已自动接入：{FREE_CONNECTOR_LABEL}（失败静默回退 Pollinations）。搜索／今日推荐／造句均走此链路，不用选手动模型。
+        </p>
       </section>
       <div className="card">
         <h3>搜索单词</h3>
@@ -587,7 +591,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">支持英文或中文查询；由免费 AI 生成<strong>中译</strong>与<strong>英译</strong>（含例句）。结果会缓存，重复查询更快；AI 失败时英文词可回退网上词典。可收藏搜索过的词。</p>
+        <p className="muted">任意输入英文／中文 → 网站免费 AI 连接器（{FREE_CONNECTOR_LABEL}）实时生成<strong>生词</strong>、<strong>中译</strong>、<strong>英译</strong>与<strong>例句</strong>。无需填 API key。结果会缓存；失败时英文可回退网上词典。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -1091,7 +1095,7 @@ function Recommend({
     <div className="card">
       <h2>今日推荐</h2>
       <p className="muted">
-        由外接模型推荐今日背单词（仅 DSE 范围词表，不会编造课外词）。可自己输入每天背几个；同一天同数量会缓存，点「重新推荐」可再请模型挑。
+        由网站免费 AI 连接器从站内 DSE 词表精选今日背单词（不准编假词）。可自填每天背几个；同一天同数量会缓存，点「重新推荐」可再请模型挑。
       </p>
 
       <div className="row" style={{ marginTop: 10, marginBottom: 8 }}>
