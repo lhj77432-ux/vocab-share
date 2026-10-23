@@ -1,10 +1,9 @@
-/** Word lookup: Puter.js free AI (bilingual ZH/EN) first,
- * Pollinations silent fallback, then Free Dictionary / Wiktionary for English.
+/** Word lookup via website free AI connector (Puter Gemini Flash-Lite →
+ * Pollinations), then Free Dictionary / Wiktionary for English.
  * Cache: in-memory + localStorage for repeat lookups (~instant).
  */
 
-import { chatCompletion } from './api'
-import { loadApiSettings } from './storage'
+import { connectorChat } from './freeAiConnector'
 
 export type DictSense = {
   partOfSpeech: string
@@ -558,8 +557,6 @@ function parseLlmEntry(query: string, data: unknown): DictEntry | null {
 }
 
 async function fetchLlmLookup(query: string, signal: AbortSignal): Promise<DictLookupResult> {
-  const settings = typeof localStorage !== 'undefined' ? loadApiSettings() : undefined
-
   const system = [
     'You are a bilingual English–Chinese dictionary for DSE / school learners.',
     'Reply with a single JSON object only. No markdown, no commentary.',
@@ -578,12 +575,13 @@ async function fetchLlmLookup(query: string, signal: AbortSignal): Promise<DictL
   const timer = setTimeout(() => timeoutLink.abort(), LLM_TIMEOUT_MS)
 
   try {
-    const text = await chatCompletion(
-      settings ?? { baseUrl: 'puter', apiKey: '', model: 'google/gemini-3.1-flash-lite' },
-      'vocab',
+    const text = await connectorChat({
+      mode: 'vocab',
       user,
-      { signal: timeoutLink.signal, temperature: 0.2, systemOverride: system },
-    )
+      system,
+      temperature: 0.2,
+      signal: timeoutLink.signal,
+    })
     if (typeof text !== 'string' || !text.trim()) {
       return { ok: false, reason: 'not_found', message: `AI 未返回「${query}」的可用释义。` }
     }

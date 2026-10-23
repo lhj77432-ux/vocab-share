@@ -1,5 +1,5 @@
 import type { VocabWord } from '../data/dseWords'
-import { chatCompletion } from './api'
+import { connectorChat, getFreeConnectorSettings } from './freeAiConnector'
 import { recommendToday, scoreWord } from './srs'
 import { todayStr } from './storage'
 import type { ApiSettings, AppProgress } from './types'
@@ -326,10 +326,14 @@ export async function fetchDailyAiRecommend(opts: {
   ].join('\n')
 
   try {
-    const reply = await chatCompletion(api, 'analysis', user, {
-      systemOverride: system,
+    const reply = await connectorChat({
+      mode: 'analysis',
+      user,
+      system,
       temperature: 0.2,
       signal,
+      // Prefer free connector; allow caller api only if it is a custom keyed endpoint
+      api: api?.apiKey?.trim() ? api : getFreeConnectorSettings(),
     })
     const arr = extractJsonArray(reply)
     if (!arr) throw new Error('模型未返回可解析 JSON')
