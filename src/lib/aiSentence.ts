@@ -1,9 +1,9 @@
 import type { VocabWord } from '../data/dseWords'
-import { connectorMakeSentence } from './freeAiConnector'
+import { freeAiMakeSentence } from './freeAi'
 import type { ApiSettings } from './types'
 
 /**
- * One-click AI sentence via the website free AI connector
+ * One-click AI sentence via free model
  * (Puter Gemini Flash-Lite → Pollinations fallback).
  */
 export async function generateAiSentence(
@@ -11,5 +11,5 @@ export async function generateAiSentence(
   _api?: ApiSettings,
   signal?: AbortSignal,
 ): Promise<string> {
-  return connectorMakeSentence(word, signal)
+  return freeAiMakeSentence(word, signal)
 }
