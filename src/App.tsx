@@ -6,18 +6,27 @@ import { generateAiSentence } from './lib/aiSentence'
 import {
   freeAiCategorize,
   freeAiEnrichWord,
-  freeAiQuizItem,
+  freeAiClozeForWord,
   getFreeAiSettings,
-  type AiQuizItem,
 } from './lib/freeAi'
+import { SensePracticeCard, ClozeBlock, AbcdChoices } from './components/SensePractice'
+import {
+  buildQuizSession,
+  nextFreshQuizQuestion,
+  DEFAULT_QUIZ_LENGTH,
+  type QuizQuestion,
+} from './lib/quizSession'
 import { lookupWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
 import { weekStats, weeklySummaryText } from './lib/srs'
 import {
   DEFAULT_DAILY_COUNT,
+  clearSeenRecommended,
+  clearDailyRecommendCache,
   fetchDailyAiRecommend,
   loadDailyCountInput,
+  loadSeenRecommended,
   parseDailyCountInput,
   saveDailyCountInput,
   type DailyRecommendResult,
@@ -324,83 +333,147 @@ function Quiz({
   progress: AppProgress
   setProgress: (p: AppProgress) => void
 }) {
-  const [item, setItem] = useState<AiQuizItem | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [choice, setChoice] = useState<number | null>(null)
-  const [err, setErr] = useState('')
+  const [queue, setQueue] = useState<QuizQuestion[]>([])
+  const [idx, setIdx] = useState(0)
+  const [usedIds, setUsedIds] = useState<Set<string>>(() => new Set())
+  const [picked, setPicked] = useState<number | null>(null)
   const [score, setScore] = useState({ ok: 0, total: 0 })
+  const [err, setErr] = useState('')
+  const [enriching, setEnriching] = useState(false)
+  const [activeWordId, setActiveWordId] = useState<string | null>(null)
 
-  const nextQ = useCallback(async () => {
-    setBusy(true)
+  const startSession = useCallback(() => {
     setErr('')
-    setChoice(null)
-    try {
-      const q = await freeAiQuizItem(words)
-      setItem(q)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
-      setItem(null)
-    } finally {
-      setBusy(false)
+    setPicked(null)
+    setScore({ ok: 0, total: 0 })
+    const session = buildQuizSession(words, DEFAULT_QUIZ_LENGTH)
+    if (!session.length) {
+      setErr('词表不足，无法出题')
+      setQueue([])
+      setUsedIds(new Set())
+      setIdx(0)
+      setActiveWordId(null)
+      return
     }
+    setQueue(session)
+    setUsedIds(new Set(session.map((q) => q.word.id)))
+    setIdx(0)
+    setActiveWordId(session[0].word.id)
   }, [words])
 
   useEffect(() => {
-    void nextQ()
-  }, [nextQ])
+    startSession()
+  }, [startSession])
 
-  const packWord = item ? words.find((w) => w.word.toLowerCase() === item.word.toLowerCase()) : undefined
+  const item = queue[idx] ?? null
+
+  useEffect(() => {
+    if (!item) return
+    const wid = item.word.id
+    let cancelled = false
+    ;(async () => {
+      setEnriching(true)
+      try {
+        const cloze = await freeAiClozeForWord(item.word, undefined, item.cloze.sentenceEn)
+        if (cancelled) return
+        setQueue((prev) =>
+          prev.map((q) =>
+            q.word.id === wid
+              ? { ...q, cloze: { sentenceEn: cloze.sentenceEn, parts: cloze.parts } }
+              : q,
+          ),
+        )
+      } catch {
+        /* keep local cloze */
+      } finally {
+        if (!cancelled) setEnriching(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeWordId])
+
+  const advance = useCallback(() => {
+    setPicked(null)
+    setQueue((prev) => {
+      const at = idx
+      if (at + 1 < prev.length) {
+        const nextItem = prev[at + 1]
+        setIdx(at + 1)
+        setActiveWordId(nextItem.word.id)
+        return prev
+      }
+      const fresh = nextFreshQuizQuestion(words, usedIds)
+      if (!fresh) {
+        // wrap: rebuild a new session continuously
+        const session = buildQuizSession(words, DEFAULT_QUIZ_LENGTH)
+        if (!session.length) return prev
+        setUsedIds(new Set(session.map((q) => q.word.id)))
+        setIdx(0)
+        setActiveWordId(session[0].word.id)
+        return session
+      }
+      setUsedIds((u) => {
+        const n = new Set(u)
+        n.add(fresh.word.id)
+        return n
+      })
+      setIdx(at + 1)
+      setActiveWordId(fresh.word.id)
+      return [...prev, fresh]
+    })
+  }, [idx, usedIds, words])
+
+  const cloneProgress = () => ({
+    ...progress,
+    byWord: { ...progress.byWord },
+    wrongIds: [...progress.wrongIds],
+    dayLogs: progress.dayLogs.map((d) => ({ ...d })),
+    sentences: [...progress.sentences],
+  })
 
   return (
     <div className="card">
       <h2>测验</h2>
-      <p className="muted">题目由本站服务根据站内 DSE 词表现场出题。正确 {score.ok}/{score.total}</p>
+      <p className="muted">
+        连续多题：每答一题自动出全新一题（新词／例句挖空／选项）。正确 {score.ok}/{score.total}
+        {item ? ` · 第 ${idx + 1} 题` : ''}
+        {enriching ? ' · 正在润色挖空…' : ''}
+      </p>
       {err ? <p className="warn">{err}</p> : null}
-      {busy && !item ? <p className="muted">正在出题…</p> : null}
+      {!item && !err ? <p className="muted">正在出题…</p> : null}
       {item ? (
         <>
-          <div className="word-big">{item.word}</div>
-          <p className="muted">{item.questionZh}</p>
-          <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-            {item.options.map((opt, idx) => {
-              const selected = choice === idx
-              const correct = choice !== null && idx === item.answerIndex
-              const wrong = selected && idx !== item.answerIndex
-              return (
-                <button
-                  key={idx}
-                  type="button"
-                  className={`btn quiz-opt${correct ? ' correct' : ''}${wrong ? ' wrong' : ''}`}
-                  style={{ borderColor: correct ? 'var(--ok)' : wrong ? 'var(--bad)' : undefined }}
-                  disabled={choice !== null || busy}
-                  onClick={() => {
-                    setChoice(idx)
-                    const ok = idx === item.answerIndex
-                    setScore((s) => ({ ok: s.ok + (ok ? 1 : 0), total: s.total + 1 }))
-                    if (packWord) {
-                      const next = recordQuiz(
-                        { ...progress, byWord: { ...progress.byWord }, wrongIds: [...progress.wrongIds], dayLogs: progress.dayLogs.map((d) => ({ ...d })), sentences: [...progress.sentences] },
-                        packWord.id,
-                        ok,
-                      )
-                      setProgress(next)
-                    }
-                    setTimeout(() => { void nextQ() }, 900)
-                  }}
-                >
-                  {opt}
-                </button>
-              )
-            })}
-          </div>
-          {choice !== null && item.explainZh ? (
-            <p className="muted" style={{ marginTop: 10 }}>{item.explainZh}</p>
+          <div className="word-big">{item.word.word}</div>
+          <p className="muted">选出「{item.word.word}」的正确中文意思</p>
+          <ClozeBlock cloze={item.cloze} />
+          <AbcdChoices
+            choices={item.choices}
+            picked={picked}
+            onPick={(choiceIdx, ok) => {
+              if (picked !== null) return
+              setPicked(choiceIdx)
+              setScore((s) => ({ ok: s.ok + (ok ? 1 : 0), total: s.total + 1 }))
+              setProgress(recordQuiz(cloneProgress(), item.word.id, ok))
+              window.setTimeout(() => advance(), 850)
+            }}
+          />
+          {picked !== null ? (
+            <p style={{ marginTop: 10 }}>
+              {item.choices[picked]?.correct
+                ? `正确：${item.word.meaningZh}`
+                : `不对。正确答案：${item.word.meaningZh}`}
+            </p>
           ) : null}
         </>
       ) : null}
       <div className="row" style={{ marginTop: 12 }}>
-        <button className="btn" type="button" disabled={busy} onClick={() => void nextQ()}>
-          {busy ? '出题中…' : '下一题'}
+        <button className="btn" type="button" onClick={() => advance()} disabled={!item || picked === null}>
+          下一题
+        </button>
+        <button className="btn" type="button" onClick={() => startSession()}>
+          重新开一轮
         </button>
       </div>
     </div>
@@ -1191,6 +1264,7 @@ function Recommend({
   const [error, setError] = useState('')
   const [explain, setExplain] = useState('')
   const [planBusy, setPlanBusy] = useState(false)
+  const [seenCount, setSeenCount] = useState(() => loadSeenRecommended().size)
 
   const list: RecommendItem[] = result?.items ?? []
 
@@ -1209,6 +1283,10 @@ function Recommend({
           forceRefresh,
         })
         setResult(res)
+        setSeenCount(loadSeenRecommended().size)
+        if (res.exhausted && !res.items.length) {
+          setError('尚未推荐过的新词已用完。可点「清空已推记录」后重来，或降低每天数量。')
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -1232,7 +1310,10 @@ function Recommend({
           count,
           forceRefresh: false,
         })
-        if (!cancelled) setResult(res)
+        if (!cancelled) {
+          setResult(res)
+          setSeenCount(loadSeenRecommended().size)
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -1242,22 +1323,21 @@ function Recommend({
     return () => {
       cancelled = true
     }
-    // Initial load / when word pack or progress identity changes enough to matter
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [words, api])
 
   const sourceLabel =
     result?.source === 'ai'
-      ? '本站推荐 · 仅 DSE 范围'
+      ? '本站推荐 · 仅 DSE 新词'
       : result?.source === 'local'
-        ? '本地推荐（模型不可用时的回退）· 仅 DSE 范围'
-        : '仅 DSE 范围'
+        ? '本地推荐（回退）· 仅 DSE 新词'
+        : '仅 DSE 新词'
 
   return (
     <div className="card">
       <h2>今日推荐</h2>
       <p className="muted">
-        由本站服务从站内 DSE 词表精选今日背单词。每条含中文意思、例句与推荐理由。可自填数量；同天同数量会缓存。
+        设定每天背 N 个尚未推荐过的新词。「重新推荐」不会重复已推过的词。每词含例句中译挖空（目标词中文 ____）、ABCD 选义与推荐理由。
       </p>
 
       <div className="row" style={{ marginTop: 10, marginBottom: 8 }}>
@@ -1272,7 +1352,6 @@ function Recommend({
           value={countInput}
           onChange={(e) => {
             const v = e.target.value
-            // Allow free typing (digits / empty); persist as typed
             if (v === '' || /^\d{1,3}$/.test(v)) {
               setCountInput(v)
               saveDailyCountInput(v)
@@ -1284,11 +1363,11 @@ function Recommend({
             setCountInput(next)
             saveDailyCountInput(next)
           }}
-          placeholder="自己输入，例如 12"
-          aria-label="每天背多少个英文单词（自己输入）"
+          placeholder="例如 5"
+          aria-label="每天背多少个新词"
           style={{ width: 120, flex: '0 0 auto' }}
         />
-        <span className="muted">个（自己输入；实际按 1–100 调用模型）</span>
+        <span className="muted">个新词（1–100）</span>
         <button
           className="btn btn-primary"
           type="button"
@@ -1297,57 +1376,53 @@ function Recommend({
         >
           {loading ? '推荐中…' : '生成今日推荐'}
         </button>
+        <button className="btn" type="button" disabled={loading} onClick={() => runRecommend(true)}>
+          重新推荐
+        </button>
         <button
           className="btn"
           type="button"
           disabled={loading}
-          onClick={() => runRecommend(true)}
+          onClick={() => {
+            if (!confirm('清空「已推荐过」记录？之后可以重新抽到这些词。')) return
+            clearSeenRecommended()
+            clearDailyRecommendCache()
+            setSeenCount(0)
+            setResult(null)
+            void runRecommend(true)
+          }}
         >
-          重新推荐
+          清空已推记录
         </button>
       </div>
 
       <p className="muted" style={{ marginBottom: 8 }}>
         {loading && !list.length
-          ? '正在请外接模型从 DSE 词表中挑选…'
+          ? '正在挑选尚未学过的 DSE 新词…'
           : result
-            ? `${sourceLabel} · 今日 ${result.date} · ${list.length} 词`
+            ? `${sourceLabel} · ${result.date} · ${list.length}/${result.appliedCount} 词 · 已推记录 ${seenCount} · 剩余约 ${result.remainingUnseen ?? '—'}`
             : sourceLabel}
       </p>
       {error ? <p className="warn">{error}</p> : null}
+      {result?.exhausted && list.length > 0 ? (
+        <p className="muted">新词池不足 N，已尽量给出尚未推荐过的词。</p>
+      ) : null}
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>单词</th>
-            <th>中文意思</th>
-            <th>例句</th>
-            <th>为何推荐</th>
-          </tr>
-        </thead>
-        <tbody>
-          {list.length === 0 && !loading ? (
-            <tr>
-              <td colSpan={5} className="muted">
-                暂无推荐，请输入数量后点「生成今日推荐」。
-              </td>
-            </tr>
-          ) : (
-            list.map((item, i) => (
-              <tr key={item.word.id}>
-                <td>{i + 1}</td>
-                <td>
-                  <b>{item.word.word}</b>
-                </td>
-                <td>{item.word.meaningZh}</td>
-                <td>{item.sentence || item.word.example}</td>
-                <td>{item.reasons.join('；')}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+      {!list.length && !loading ? (
+        <p className="muted">暂无推荐，请输入数量后点「生成今日推荐」。</p>
+      ) : (
+        list.map((item) => (
+          <SensePracticeCard
+            key={item.word.id}
+            word={item.word}
+            pool={words}
+            sentence={item.sentence}
+            cloze={item.cloze}
+            choices={item.choices}
+            reasons={item.reasons}
+          />
+        ))
+      )}
 
       <div className="row" style={{ marginTop: 10 }}>
         <NavLink className="btn btn-primary" to="/learn">
@@ -1360,9 +1435,7 @@ function Recommend({
           onClick={async () => {
             setPlanBusy(true)
             try {
-              const payload = list
-                .map((x) => `${x.word.word}: ${x.reasons.join(',')}`)
-                .join('\n')
+              const payload = list.map((x) => `${x.word.word}: ${x.reasons.join(',')}`).join('\n')
               const reply = await chatCompletion(
                 api,
                 'analysis',
