@@ -107,6 +107,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </button>
           <nav className="nav">
             <NavLink to="/" end>首页</NavLink>
+            <NavLink to="/play">玩</NavLink>
             <NavLink to="/connector">连接器</NavLink>
             <NavLink to="/search">搜索</NavLink>
             <NavLink to="/favorites">收藏</NavLink>
@@ -139,7 +140,7 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
       <section className="hero">
         <div>
           <h1>{pack.title}</h1>
-          <p>主能力是<strong>免费 AI 连接器</strong>（像插件）：任意输入 → 自动接模型 → 生词／中译／英译／造句。本地 DSE 词表仍可学习／推荐。</p>
+          <p>主能力是<strong>玩页插件</strong>：输入 → 连接器 → 免费模型 → 显现站上功能（生词／中译／英译／造句／学习入口）。本地 DSE 词表仍可学习／推荐。</p>
         </div>
         <div className="stats">
           <div className="stat"><b>{pack.words.length}</b><span>词条</span></div>
@@ -154,7 +155,8 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
       <div className="card">
         <h3>快速入口</h3>
         <div className="row" style={{ marginTop: 8 }}>
-          <NavLink className="btn btn-primary" to="/connector">连接器</NavLink>
+          <NavLink className="btn btn-primary" to="/play">玩 · 插件</NavLink>
+          <NavLink className="btn" to="/connector">连接器</NavLink>
           <NavLink className="btn" to="/recommend">今日推荐</NavLink>
           <NavLink className="btn" to="/search">单词搜索</NavLink>
           <NavLink className="btn" to="/favorites">我的收藏</NavLink>
@@ -339,10 +341,22 @@ function Sentence({
   setProgress: (p: AppProgress) => void
   api: ApiSettings
 }) {
-  const [idx, setIdx] = useState(0)
+  const [params] = useSearchParams()
+  const qWord = (params.get('q') ?? '').trim()
+  const startIdx = useMemo(() => {
+    if (!qWord) return 0
+    const found = words.findIndex(
+      (x) => x.word.toLowerCase() === qWord.toLowerCase() || x.id === qWord,
+    )
+    return found >= 0 ? found : 0
+  }, [words, qWord])
+  const [idx, setIdx] = useState(startIdx)
   const [text, setText] = useState('')
   const [feedback, setFeedback] = useState('')
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    setIdx(startIdx)
+  }, [startIdx])
   const w = words[idx % words.length]
   if (!w) return null
 
@@ -1489,14 +1503,34 @@ function SharePage({ pack }: { pack: WordListPack }) {
   )
 }
 
+function PlayPage() {
+  return (
+    <>
+      <AiConnectorPanel variant="play" />
+      <div className="card">
+        <h3>还想练本地词表？</h3>
+        <p className="muted">玩页只做「输入→连接器→模型→显现站上功能」；学习／测验／今日推荐等全部保留。</p>
+        <div className="row" style={{ marginTop: 8 }}>
+          <NavLink className="btn" to="/learn">学习</NavLink>
+          <NavLink className="btn" to="/quiz">测验</NavLink>
+          <NavLink className="btn" to="/recommend">今日推荐</NavLink>
+          <NavLink className="btn" to="/favorites">收藏</NavLink>
+          <NavLink className="btn" to="/connector">完整连接器</NavLink>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function ConnectorPage() {
   return (
     <>
       <AiConnectorPanel variant="full" />
       <div className="card">
         <h3>其它仍保留的功能</h3>
-        <p className="muted">学习／收藏／今日推荐／本地 DSE 词表／测验／错词本／导出／分享均未删除。推荐路径仍只从站内 DSE 词表选词。</p>
+        <p className="muted">学习／收藏／今日推荐／本地 DSE 词表／测验／错词本／导出／分享均未删除。推荐路径仍只从站内 DSE 词表选词。想更极简（单输入显现功能）请开「玩」页。</p>
         <div className="row" style={{ marginTop: 8 }}>
+          <NavLink className="btn btn-primary" to="/play">玩 · 插件</NavLink>
           <NavLink className="btn" to="/recommend">今日推荐</NavLink>
           <NavLink className="btn" to="/learn">学习</NavLink>
           <NavLink className="btn" to="/search">搜索</NavLink>
@@ -1544,6 +1578,7 @@ function AppInner() {
     <Shell>
       <Routes>
         <Route path="/" element={<Home pack={pack} shared={shared} progress={progress} />} />
+        <Route path="/play" element={<PlayPage />} />
         <Route path="/connector" element={<ConnectorPage />} />
         <Route path="/search" element={<SearchWords words={pack.words} />} />
         <Route path="/favorites" element={<FavoritesPage />} />

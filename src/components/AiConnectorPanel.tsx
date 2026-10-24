@@ -1,13 +1,13 @@
 /**
- * Plugin-style free AI connector panel (website MCP vibe).
- * Any input → auto Puter/Pollinations → 生词 / 中译 / 英译 / 造句.
- * No model picker, no API key.
+ * Plugin-style free AI connector panel.
+ * Flow: 输入 → 连接器 → 免费模型 → 显现站上已有功能（生词／中译／英译／造句／收藏／学习入口）
+ * Not a free-chat surface.
  */
 import { useEffect, useRef, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   FREE_CONNECTOR_LABEL,
-  connectorLexAndSentence,
+  connectorPluginAsk,
   type ConnectorLexResult,
 } from '../lib/freeAiConnector'
 import {
@@ -49,9 +49,27 @@ function resultToFavoriteEntry(r: ConnectorLexResult) {
   }
 }
 
+function speakWord(word: string) {
+  if (!word || typeof window === 'undefined' || !window.speechSynthesis) return
+  const u = new SpeechSynthesisUtterance(word)
+  u.lang = 'en-US'
+  window.speechSynthesis.cancel()
+  window.speechSynthesis.speak(u)
+}
+
+async function copyText(label: string, text: string) {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    toast(`已复制${label}`)
+  } catch {
+    toast('复制失败，请手动选中')
+  }
+}
+
 export type AiConnectorPanelProps = {
-  /** Compact = home embed; full = dedicated /connector page */
-  variant?: 'home' | 'full'
+  /** home embed | full connector | play = minimal one-input plugin */
+  variant?: 'home' | 'full' | 'play'
   initialQuery?: string
 }
 
@@ -62,6 +80,7 @@ export function AiConnectorPanel({ variant = 'home', initialQuery = '' }: AiConn
   const [result, setResult] = useState<ConnectorLexResult | null>(null)
   const [favorites, setFavorites] = useState<FavoriteWord[]>(() => loadFavorites())
   const abortRef = useRef<AbortController | null>(null)
+  const isPlay = variant === 'play'
 
   useEffect(() => {
     if (initialQuery.trim()) setQ(initialQuery)
@@ -70,7 +89,7 @@ export function AiConnectorPanel({ variant = 'home', initialQuery = '' }: AiConn
   const run = async (raw?: string) => {
     const input = (raw ?? q).trim()
     if (!input) {
-      setErr('请输入任意英文单词、短语或中文意思')
+      setErr('请输入英文单词、短语或中文意思')
       return
     }
     abortRef.current?.abort()
@@ -80,7 +99,7 @@ export function AiConnectorPanel({ variant = 'home', initialQuery = '' }: AiConn
     setErr(null)
     setResult(null)
     try {
-      const r = await connectorLexAndSentence(input, ac.signal)
+      const r = await connectorPluginAsk(input, ac.signal)
       if (ac.signal.aborted) return
       setResult(r)
       setQ(input)
@@ -106,21 +125,27 @@ export function AiConnectorPanel({ variant = 'home', initialQuery = '' }: AiConn
     toast(isFavoriteWord(next, result.word) ? `已收藏「${result.word}」` : `已取消收藏「${result.word}」`)
   }
 
+  const title =
+    variant === 'play' ? '玩 · 插件' : variant === 'full' ? '免费 AI 连接器' : '免费 AI 连接器（主入口）'
+
   return (
-    <section className={`connector-panel ${variant === 'full' ? 'connector-panel--full' : ''}`}>
+    <section
+      className={`connector-panel ${variant === 'full' || isPlay ? 'connector-panel--full' : ''} ${isPlay ? 'connector-panel--play' : ''}`}
+    >
       <div className="connector-head">
         <div className="connector-title-row">
-          <span className="connector-plugin-badge" title="网站式免费 AI 连接器（自动）">
+          <span className="connector-plugin-badge" title="输入 → 连接器 → 免费模型 → 站上功能">
             🔌 插件 · 连接器
           </span>
           <span className="connector-status-chip" aria-live="polite">
             {busy ? '连接中…' : '自动已接入'}
           </span>
         </div>
-        <h2>{variant === 'full' ? '免费 AI 连接器' : '免费 AI 连接器（主入口）'}</h2>
+        <h2>{title}</h2>
         <p className="muted">
-          像插件一样：任意输入 → 自动接免费大模型思考 → 返回<strong>生词</strong>、<strong>中文意思</strong>、<strong>英译</strong>、<strong>造句</strong>。
-          无需选手动模型／填 key。链路：{FREE_CONNECTOR_LABEL}（失败静默回退 Pollinations）。词库／可学生成不封顶。
+          {isPlay
+            ? '一个输入框：经连接器自动接免费模型，结果直接显现站上功能（生词／中译／英译／造句／收藏／学习）。'
+            : <>像插件一样：输入 → 连接器 → 免费模型 → 显现<strong>生词</strong>、<strong>中文意思</strong>、<strong>英译</strong>、<strong>造句</strong>。链路：{FREE_CONNECTOR_LABEL}（失败静默回退 Pollinations）。</>}
         </p>
       </div>
 
@@ -131,40 +156,34 @@ export function AiConnectorPanel({ variant = 'home', initialQuery = '' }: AiConn
           void run()
         }}
       >
-        <label className="sr-only" htmlFor="ai-connector-input">
+        <label className="sr-only" htmlFor={`ai-connector-input-${variant}`}>
           连接器输入
         </label>
         <textarea
-          id="ai-connector-input"
+          id={`ai-connector-input-${variant}`}
           className="connector-input"
-          rows={variant === 'full' ? 3 : 2}
+          rows={isPlay ? 3 : variant === 'full' ? 3 : 2}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="随便输入：sustainable / 可持续发展 / climate change …"
+          placeholder="输入一个：sustainable / 可持续发展 / climate change …"
           disabled={busy}
+          autoFocus={isPlay}
         />
         <div className="connector-actions">
           <button className="btn btn-primary" type="submit" disabled={busy || !q.trim()}>
-            {busy ? '模型思考中…' : '一键生成'}
+            {busy ? '模型处理中…' : isPlay ? '显现功能' : '一键生成'}
           </button>
           {result ? (
-            <button
-              className="btn"
-              type="button"
-              disabled={busy}
-              onClick={() => void run(q)}
-            >
+            <button className="btn" type="button" disabled={busy} onClick={() => void run(q)}>
               再生成
             </button>
           ) : null}
           {variant === 'home' ? (
-            <NavLink className="btn" to="/connector">
-              打开完整连接器
-            </NavLink>
+            <NavLink className="btn" to="/play">打开玩页</NavLink>
+          ) : variant === 'full' ? (
+            <NavLink className="btn" to="/play">极简玩页</NavLink>
           ) : (
-            <NavLink className="btn" to="/search">
-              去搜索页
-            </NavLink>
+            <NavLink className="btn" to="/favorites">我的收藏</NavLink>
           )}
         </div>
       </form>
@@ -180,14 +199,18 @@ export function AiConnectorPanel({ variant = 'home', initialQuery = '' }: AiConn
               {result.phonetic ? <span className="muted">/{result.phonetic}/</span> : null}
             </div>
             <div className="row">
+              <button className="btn" type="button" onClick={() => speakWord(result.word)}>发音</button>
               <button className="btn" type="button" onClick={onToggleFavorite}>
                 {favorited ? '★ 已收藏' : '☆ 收藏'}
               </button>
-              <NavLink className="btn" to={`/sentence?q=${encodeURIComponent(result.word)}`}>
-                去造句页
-              </NavLink>
+              {result.sentence ? (
+                <button className="btn" type="button" onClick={() => void copyText('造句', result.sentence)}>
+                  复制造句
+                </button>
+              ) : null}
             </div>
           </div>
+
           <dl className="connector-dl">
             <div>
               <dt>中文意思</dt>
@@ -202,14 +225,31 @@ export function AiConnectorPanel({ variant = 'home', initialQuery = '' }: AiConn
               <dd className="connector-sentence">{result.sentence}</dd>
             </div>
           </dl>
+
+          <div className="connector-feature-links row" style={{ marginTop: 12 }}>
+            <NavLink className="btn btn-primary" to={`/learn?word=${encodeURIComponent(result.word)}`}>
+              去学习
+            </NavLink>
+            <NavLink className="btn" to={`/sentence?q=${encodeURIComponent(result.word)}`}>
+              造句练习
+            </NavLink>
+            <NavLink className="btn" to={`/search?q=${encodeURIComponent(result.word)}`}>
+              搜索此词
+            </NavLink>
+            <NavLink className="btn" to="/favorites">收藏夹</NavLink>
+            <NavLink className="btn" to="/quiz">测验</NavLink>
+          </div>
+
           <p className="muted" style={{ marginTop: 8, fontSize: '0.8rem' }}>
-            来源：网站免费 AI 连接器（非本地词表硬编码；可任意扩展学习）
+            经免费 AI 连接器生成后显现站上功能（非聊天回复）
           </p>
         </div>
       ) : (
         !busy && !err && (
           <p className="muted connector-hint">
-            提示：这是连接器路径，不是「只能翻本地约 N 个词」。本地 DSE 词表仍用于学习／今日推荐（推荐只从站内词选、不编假词）。
+            {isPlay
+              ? '流程：输入 → 连接器 → 免费模型 → 显现生词／中译／造句等站上功能。今日推荐仍只从站内 DSE 词表选。'
+              : '连接器路径不限本地词表条数；今日推荐仍只从站内 DSE 词表选、不编假词。'}
           </p>
         )
       )}

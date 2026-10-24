@@ -750,3 +750,9 @@ body.dark .toast { background: #eceef5; color: #12141b; }
   white-space: nowrap;
   border: 0;
 }
+
+.connector-panel--play {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}

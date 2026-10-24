@@ -147,6 +147,19 @@ export async function connectorMakeSentence(
   return s
 }
 
+
+/**
+ * Plugin entry (玩页／连接器): one input → free model → site feature fields only.
+ * Returns the same shape used by 生词／中译／英译／造句 cards — never a free-chat reply.
+ */
+export async function connectorPluginAsk(
+  rawInput: string,
+  signal?: AbortSignal,
+): Promise<ConnectorLexResult> {
+  return connectorLexAndSentence(rawInput, signal)
+}
+
+
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : ''
 }
