@@ -1,22 +1,32 @@
 import type { VocabWord } from '../data/dseWords'
 import { freeAiChat, getFreeAiSettings } from './freeAi'
+import {
+  buildMeaningChoices,
+  localClozeGloss,
+  normalizeGlossParts,
+  type ClozeGloss,
+  type GlossPart,
+  type MeaningChoice,
+} from './mcq'
 import { recommendToday, scoreWord } from './srs'
-import { todayStr } from './storage'
+import { loadFavorites, todayStr } from './storage'
 import type { ApiSettings, AppProgress } from './types'
 
 export const DAILY_COUNT_KEY = 'vocab-share-daily-count-v1'
-export const DAILY_RECOMMEND_CACHE_KEY = 'vocab-share-daily-ai-recommend-v2'
-export const DEFAULT_DAILY_COUNT = 12
+export const DAILY_RECOMMEND_CACHE_KEY = 'vocab-share-daily-ai-recommend-v3'
+export const SEEN_RECOMMENDED_KEY = 'vocab-share-seen-recommended-v1'
+export const DEFAULT_DAILY_COUNT = 5
 export const MIN_DAILY_COUNT = 1
-export const MAX_DAILY_COUNT = 200
+export const MAX_DAILY_COUNT = 100
 
 export type RecommendSource = 'ai' | 'local'
 
 export type RecommendItem = {
   word: VocabWord
   reasons: string[]
-  /** Example sentence from free model (or pack example as fallback) */
   sentence?: string
+  cloze?: ClozeGloss
+  choices?: MeaningChoice[]
   score?: number
 }
 
@@ -25,25 +35,31 @@ export type DailyRecommendResult = {
   count: number
   source: RecommendSource
   items: RecommendItem[]
-  /** Raw typed count string as last applied (for display) */
   appliedCount: number
+  /** True when remaining unseen pool could not fill N */
+  exhausted?: boolean
+  remainingUnseen?: number
 }
 
-export type DailyRecommendCache = {
+type DailyRecommendCache = {
   date: string
   count: number
   source: RecommendSource
-  /** Stored as word ids + reason text for rebuild */
-  picks: { id: string; reason: string; sentence?: string }[]
+  picks: {
+    id: string
+    reason: string
+    sentence?: string
+    gloss?: GlossPart[]
+  }[]
+  exhausted?: boolean
+  remainingUnseen?: number
 }
 
-/** Clamp a numeric count for model / local recommend calls. */
 export function clampDailyCount(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_DAILY_COUNT
   return Math.min(MAX_DAILY_COUNT, Math.max(MIN_DAILY_COUNT, Math.round(n)))
 }
 
-/** Persist last typed value as string (user may leave incomplete digits while typing). */
 export function loadDailyCountInput(): string {
   try {
     const raw = localStorage.getItem(DAILY_COUNT_KEY)
@@ -58,13 +74,43 @@ export function saveDailyCountInput(raw: string) {
   } catch { /* ignore */ }
 }
 
-/** Parse typed input → clamped count; empty / invalid → default. */
 export function parseDailyCountInput(raw: string): number {
   const t = raw.trim()
   if (!t) return DEFAULT_DAILY_COUNT
   const n = Number(t)
   if (!Number.isFinite(n)) return DEFAULT_DAILY_COUNT
   return clampDailyCount(n)
+}
+
+export function loadSeenRecommended(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SEEN_RECOMMENDED_KEY)
+    if (!raw) return new Set()
+    const arr = JSON.parse(raw) as unknown
+    if (!Array.isArray(arr)) return new Set()
+    return new Set(arr.filter((x): x is string => typeof x === 'string' && !!x))
+  } catch {
+    return new Set()
+  }
+}
+
+export function saveSeenRecommended(ids: Set<string>) {
+  try {
+    localStorage.setItem(SEEN_RECOMMENDED_KEY, JSON.stringify([...ids]))
+  } catch { /* ignore */ }
+}
+
+export function markRecommendedSeen(ids: string[]) {
+  if (!ids.length) return
+  const set = loadSeenRecommended()
+  for (const id of ids) set.add(id)
+  saveSeenRecommended(set)
+}
+
+export function clearSeenRecommended() {
+  try {
+    localStorage.removeItem(SEEN_RECOMMENDED_KEY)
+  } catch { /* ignore */ }
 }
 
 function loadCache(): DailyRecommendCache | null {
@@ -91,6 +137,48 @@ export function clearDailyRecommendCache() {
   } catch { /* ignore */ }
 }
 
+/** Ids to skip: historically recommended + favorites + already practiced. */
+export function getExcludeRecommendIds(
+  words: VocabWord[],
+  progress: AppProgress,
+): Set<string> {
+  const exclude = loadSeenRecommended()
+  for (const [id, st] of Object.entries(progress.byWord)) {
+    if (st && st.seen > 0) exclude.add(id)
+  }
+  const fav = new Set(loadFavorites().map((f) => f.word.toLowerCase()))
+  for (const w of words) {
+    if (fav.has(w.word.toLowerCase())) exclude.add(w.id)
+  }
+  return exclude
+}
+
+function attachPracticeFields(
+  word: VocabWord,
+  pool: VocabWord[],
+  reason: string,
+  sentence?: string,
+  gloss?: GlossPart[],
+): RecommendItem {
+  const en = (sentence || word.example || '').trim() || word.example
+  const cloze: ClozeGloss = {
+    sentenceEn: en,
+    parts: normalizeGlossParts(gloss, word, en),
+  }
+  if (!gloss?.length) {
+    const local = localClozeGloss(word, en)
+    cloze.sentenceEn = local.sentenceEn
+    cloze.parts = local.parts
+  }
+  return {
+    word,
+    reasons: [reason || '今日推荐'],
+    sentence: cloze.sentenceEn,
+    cloze,
+    choices: buildMeaningChoices(word, pool, 4),
+  }
+}
+
 function rebuildFromCache(
   cache: DailyRecommendCache,
   words: VocabWord[],
@@ -98,10 +186,9 @@ function rebuildFromCache(
   const byId = new Map(words.map((w) => [w.id, w]))
   const items: RecommendItem[] = []
   for (const p of cache.picks) {
-    // Cache may only surface pack words — drop anything not exact in current DSE list
     const w = byId.get(p.id)
     if (!w) continue
-    items.push({ word: w, reasons: [p.reason || '今日推荐'], sentence: p.sentence || w.example })
+    items.push(attachPracticeFields(w, words, p.reason, p.sentence, p.gloss))
   }
   if (!items.length) return null
   return {
@@ -110,19 +197,24 @@ function rebuildFromCache(
     source: cache.source,
     items,
     appliedCount: cache.count,
+    exhausted: cache.exhausted,
+    remainingUnseen: cache.remainingUnseen,
   }
 }
 
-/** Build a compact DSE-only candidate pool for the model (~3N scored + some unseen). */
 export function buildCandidatePool(
   words: VocabWord[],
   progress: AppProgress,
   count: number,
+  excludeIds?: Set<string>,
 ): { word: VocabWord; hint: string }[] {
   const n = clampDailyCount(count)
-  const poolTarget = Math.min(words.length, Math.max(n * 3, n + 8))
+  const available = excludeIds?.size
+    ? words.filter((w) => !excludeIds.has(w.id))
+    : words
+  const poolTarget = Math.min(available.length, Math.max(n * 3, n + 8))
 
-  const scored = words
+  const scored = available
     .map((w) => ({ word: w, ...scoreWord(w, progress) }))
     .sort((a, b) => b.score - a.score)
 
@@ -134,8 +226,7 @@ export function buildCandidatePool(
     picked.set(row.word.id, { word: row.word, hint })
   }
 
-  // Sprinkle a few random unseen not already in pool
-  const unseen = words.filter((w) => {
+  const unseen = available.filter((w) => {
     const st = progress.byWord[w.id]
     return (!st || st.seen === 0) && !picked.has(w.id)
   })
@@ -146,14 +237,6 @@ export function buildCandidatePool(
   for (const w of unseen.slice(0, Math.min(8, Math.max(3, Math.floor(n / 2))))) {
     if (picked.size >= poolTarget) break
     picked.set(w.id, { word: w, hint: '尚未学习' })
-  }
-
-  // Ensure wrong-book words are present
-  for (const id of progress.wrongIds) {
-    if (picked.size >= poolTarget + 4) break
-    if (picked.has(id)) continue
-    const w = words.find((x) => x.id === id)
-    if (w) picked.set(w.id, { word: w, hint: '在错词本中' })
   }
 
   return [...picked.values()]
@@ -195,11 +278,28 @@ function extractJsonArray(text: string): unknown[] | null {
   return null
 }
 
-/**
- * Strict DSE-only gate: keep a pick only if id or exact spelling matches the
- * local pack. Invented / near-miss spellings are dropped — never shown.
- * Display always uses the VocabWord from the pack (never model-invented text).
- */
+function parseGloss(raw: unknown): GlossPart[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const parts: GlossPart[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const obj = row as Record<string, unknown>
+    const text =
+      (typeof obj.t === 'string' && obj.t.trim()) ||
+      (typeof obj.text === 'string' && obj.text.trim()) ||
+      (typeof obj.zh === 'string' && obj.zh.trim()) ||
+      ''
+    if (!text) continue
+    const blank =
+      Boolean(obj.blank) ||
+      text.replace(/\s/g, '').includes('____') ||
+      text === '…' ||
+      text === '...'
+    parts.push({ text: blank ? '____' : text, blank })
+  }
+  return parts.length ? parts : undefined
+}
+
 function mapModelPicksToDse(
   raw: unknown[],
   words: VocabWord[],
@@ -225,43 +325,27 @@ function mapModelPicksToDse(
       (typeof obj.reason === 'string' && obj.reason.trim()) ||
       (typeof obj.why === 'string' && obj.why.trim()) ||
       '模型推荐'
+    const sentence =
+      (typeof obj.sentence === 'string' && obj.sentence.trim()) ||
+      (typeof obj.sentenceEn === 'string' && obj.sentenceEn.trim()) ||
+      ''
+    const gloss = parseGloss(obj.gloss ?? obj.glossParts ?? obj.parts)
 
     let w: VocabWord | undefined
-
-    // Prefer exact id from DSE pack (and preferably from the candidate pool)
     if (idStr && byId.has(idStr)) {
       const byIdWord = byId.get(idStr)!
-      if (!allowedIds || allowedIds.has(idStr)) {
-        w = byIdWord
-      }
+      if (!allowedIds || allowedIds.has(idStr)) w = byIdWord
     }
-
-    // Else exact spelling match only (case-insensitive, no fuzzy edit distance)
     if (!w && wordStr) {
-      const key = wordStr.toLowerCase()
-      const hit = byWord.get(key)
-      if (hit && (!allowedIds || allowedIds.has(hit.id))) {
-        w = hit
-      }
+      const hit = byWord.get(wordStr.toLowerCase())
+      if (hit && (!allowedIds || allowedIds.has(hit.id))) w = hit
     }
-
-    // If both id + word given and disagree with pack, drop (do not trust invent)
-    if (w && wordStr) {
-      if (w.word.toLowerCase() !== wordStr.toLowerCase()) {
-        // id won but model spelled a different word — still OK if id is valid pack entry
-        // (we display pack spelling). If only word matched path, already exact.
-      }
-    }
-
-    if (!w) continue // drop invented / unverified words — never show to user
+    if (!w) continue
     if (seen.has(w.id)) continue
     seen.add(w.id)
-    const sentence = typeof obj.sentence === 'string' ? obj.sentence.trim() : ''
-    items.push({
-      word: w,
-      reasons: [reason.slice(0, 80)],
-      sentence: sentence || w.example || undefined,
-    })
+    items.push(
+      attachPracticeFields(w, words, reason.slice(0, 80), sentence || w.example, gloss),
+    )
   }
   return items
 }
@@ -270,18 +354,25 @@ function localFallback(
   words: VocabWord[],
   progress: AppProgress,
   count: number,
+  excludeIds?: Set<string>,
 ): RecommendItem[] {
-  return recommendToday(words, progress, count).map((x) => ({
-    word: x.word,
-    reasons: x.reasons,
-    sentence: x.word.example,
-    score: x.score,
-  }))
+  const available = excludeIds?.size
+    ? words.filter((w) => !excludeIds.has(w.id))
+    : words
+  return recommendToday(available, progress, count).map((x) =>
+    attachPracticeFields(
+      x.word,
+      words,
+      x.reasons.join('；') || '本地推荐',
+      x.word.example,
+    ),
+  )
 }
 
 /**
- * Primary: external model picks N words FROM the DSE candidate pool only.
- * Fallback: local SRS recommendToday. Always filters to pack words.
+ * Primary: model picks N NEW words FROM DSE candidate pool only.
+ * Excludes historically recommended / favorites / already practiced.
+ * Each item includes ABCD choices + cloze Chinese gloss (target blanked).
  */
 export async function fetchDailyAiRecommend(opts: {
   words: VocabWord[]
@@ -294,6 +385,8 @@ export async function fetchDailyAiRecommend(opts: {
   const { words, progress, api, signal, forceRefresh } = opts
   const count = clampDailyCount(opts.count)
   const date = todayStr()
+  const exclude = getExcludeRecommendIds(words, progress)
+  const remainingUnseen = words.filter((w) => !exclude.has(w.id)).length
 
   if (!forceRefresh) {
     const cached = loadCache()
@@ -304,10 +397,31 @@ export async function fetchDailyAiRecommend(opts: {
   }
 
   if (!words.length) {
-    return { date, count, source: 'local', items: [], appliedCount: count }
+    return {
+      date,
+      count,
+      source: 'local',
+      items: [],
+      appliedCount: count,
+      exhausted: true,
+      remainingUnseen: 0,
+    }
   }
 
-  const candidates = buildCandidatePool(words, progress, count)
+  if (remainingUnseen === 0) {
+    return {
+      date,
+      count,
+      source: 'local',
+      items: [],
+      appliedCount: count,
+      exhausted: true,
+      remainingUnseen: 0,
+    }
+  }
+
+  const take = Math.min(count, remainingUnseen)
+  const candidates = buildCandidatePool(words, progress, take, exclude)
   const poolLines = candidates
     .map(
       (c, i) =>
@@ -320,18 +434,55 @@ export async function fetchDailyAiRecommend(opts: {
     'HARD RULE: 只能从用户提供的候选词表中挑选。word 必须与候选里的英文原词完全一致（可大小写不同），id 必须是候选里的 id。',
     '严禁编造、联想、近义词替换或输出候选列表之外的任何单词。若不确定，跳过，不要瞎编。',
     '只输出 JSON 数组，不要 markdown，不要其它说明。',
-    '数组元素格式：{"id":"词条id","word":"与候选完全一致的英文原词","reason":"一句中文推荐理由","sentence":"一句含该词的英文例句"}',
-    `恰好挑选 ${count} 个（若候选不足则能选几个选几个，宁可少也不要编造）。`,
-    '优先：错词、生疏、久未复习、尚未学习；适当覆盖不同类别，避免全是同一类。',
+    '数组元素格式：{"id":"词条id","word":"与候选完全一致的英文原词","reason":"一句中文推荐理由","sentence":"一句含该词的英文例句","gloss":[{"t":"中文片段","blank":false},{"t":"____","blank":true}]}',
+    'gloss：对该英文句的中文逐段意译；恰好一段 blank:true 代表目标词中文意思（用 ____）；其它词中文照常；非 blank 段不要出现目标词中文释义。',
+    `恰好挑选 ${take} 个（若候选不足则能选几个选几个，宁可少也不要编造）。`,
+    '优先：尚未学习、生疏；适当覆盖不同类别。',
   ].join('\n')
 
   const user = [
     `今日日期：${date}`,
-    `需要推荐数量：${count}`,
-    '候选词表（仅可从中选择，均为 DSE 范围）：',
+    `需要推荐数量：${take}`,
+    '候选词表（仅可从中选择，均为尚未推荐过的 DSE 词）：',
     poolLines,
     '请输出 JSON 数组。',
   ].join('\n')
+
+  const finish = (
+    items: RecommendItem[],
+    source: RecommendSource,
+  ): DailyRecommendResult => {
+    const sliced = items.slice(0, take)
+    markRecommendedSeen(sliced.map((x) => x.word.id))
+    const left = words.filter((w) => {
+      const ex = getExcludeRecommendIds(words, progress)
+      return !ex.has(w.id)
+    }).length
+    const exhausted = sliced.length < count || left === 0
+    const result: DailyRecommendResult = {
+      date,
+      count,
+      source,
+      items: sliced,
+      appliedCount: count,
+      exhausted,
+      remainingUnseen: left,
+    }
+    saveCache({
+      date,
+      count,
+      source,
+      exhausted,
+      remainingUnseen: left,
+      picks: sliced.map((x) => ({
+        id: x.word.id,
+        reason: x.reasons[0] ?? '推荐',
+        sentence: x.sentence || x.cloze?.sentenceEn,
+        gloss: x.cloze?.parts,
+      })),
+    })
+    return result
+  }
 
   try {
     const reply = await freeAiChat({
@@ -340,75 +491,30 @@ export async function fetchDailyAiRecommend(opts: {
       system,
       temperature: 0.2,
       signal,
-      // Prefer free model; allow caller api only if it is a custom keyed endpoint
       api: api?.apiKey?.trim() ? api : getFreeAiSettings(),
     })
     const arr = extractJsonArray(reply)
     if (!arr) throw new Error('模型未返回可解析 JSON')
     const allowedIds = new Set(candidates.map((c) => c.word.id))
-    // Strict: only exact id/spelling in DSE pack ∩ candidate pool; drop fakes
-    let items = mapModelPicksToDse(arr, words, count, allowedIds)
+    let items = mapModelPicksToDse(arr, words, take, allowedIds)
 
-    // If too few verified picks, refill from local recommendToday (pack-only)
-    if (items.length < count) {
+    if (items.length < take) {
       const have = new Set(items.map((x) => x.word.id))
-      for (const row of localFallback(words, progress, count * 2)) {
-        if (items.length >= count) break
+      for (const row of localFallback(words, progress, take * 2, exclude)) {
+        if (items.length >= take) break
         if (have.has(row.word.id)) continue
         have.add(row.word.id)
-        items.push({
-          word: row.word,
-          reasons: row.reasons.length ? row.reasons : ['本地补齐（过滤编造词后）'],
-          sentence: row.sentence || row.word.example,
-        })
+        items.push(row)
       }
     }
 
-    // Final safety: every item must exist in pack by id
     const packIds = new Set(words.map((w) => w.id))
-    items = items.filter((x) => packIds.has(x.word.id))
-
+    items = items.filter((x) => packIds.has(x.word.id) && !exclude.has(x.word.id))
     if (!items.length) throw new Error('模型挑选结果为空或均未通过 DSE 词表校验')
-
-    items = items.slice(0, count)
-    const result: DailyRecommendResult = {
-      date,
-      count,
-      source: 'ai',
-      items,
-      appliedCount: count,
-    }
-    saveCache({
-      date,
-      count,
-      source: 'ai',
-      picks: items.map((x) => ({
-        id: x.word.id,
-        reason: x.reasons[0] ?? '模型推荐',
-        sentence: x.sentence,
-      })),
-    })
-    return result
+    return finish(items, 'ai')
   } catch (err) {
     if (signal?.aborted) throw err
-    const items = localFallback(words, progress, count)
-    const result: DailyRecommendResult = {
-      date,
-      count,
-      source: 'local',
-      items,
-      appliedCount: count,
-    }
-    saveCache({
-      date,
-      count,
-      source: 'local',
-      picks: items.map((x) => ({
-        id: x.word.id,
-        reason: x.reasons.join('；') || '本地推荐',
-        sentence: x.sentence || x.word.example,
-      })),
-    })
-    return result
+    const items = localFallback(words, progress, take, exclude)
+    return finish(items, 'local')
   }
 }

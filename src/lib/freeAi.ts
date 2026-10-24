@@ -242,6 +242,77 @@ export async function freeAiCategorize(
   }
 }
 
+
+/** Learn / 今日推荐: English example + Chinese gloss with target meaning blanked. */
+export type ClozeGlossResult = {
+  sentenceEn: string
+  parts: { text: string; blank?: boolean }[]
+}
+
+export async function freeAiClozeForWord(
+  word: VocabWord,
+  signal?: AbortSignal,
+  baseSentence?: string,
+): Promise<ClozeGlossResult> {
+  const system = [
+    '你是香港 DSE 背单词助教。为学生做「挖空中译」练习。',
+    '只输出 JSON，不要 markdown：',
+    '{"sentenceEn":"含目标词的英文例句","gloss":[{"t":"中文片段","blank":false},{"t":"____","blank":true},...]}',
+    '规则：',
+    '1) sentenceEn 必须包含目标英文词（可变形），地道、贴近校园／社会／环境。',
+    '2) gloss 是对该英文句的中文逐段意译，按阅读顺序排列。',
+    '3) 恰好有一段 blank:true，代表目标词的中文意思，text 用 "____"；其它词语／短语的中文照常写出且 blank:false。',
+    '4) 不要在非 blank 段里出现目标词的中文释义。',
+    '5) 不要编造站外单词。',
+  ].join('\n')
+  const user = [
+    `目标词：${word.word}`,
+    `词性：${word.pos}`,
+    `正确中文意思（仅供你内部对齐 blank，不要写进非 blank 段）：${word.meaningZh}`,
+    baseSentence ? `可参考／改写此例句：${baseSentence}` : '',
+    '请输出 JSON。',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const text = await freeAiChat({
+    mode: 'vocab',
+    user,
+    system,
+    temperature: 0.45,
+    signal,
+  })
+  const obj = extractJsonObject(text)
+  const sentenceEn =
+    str(obj?.sentenceEn) || str(obj?.sentence) || str(obj?.example) || baseSentence || word.example
+  const raw = obj?.gloss ?? obj?.glossParts ?? obj?.parts
+  const parts: { text: string; blank?: boolean }[] = []
+  if (Array.isArray(raw)) {
+    for (const row of raw) {
+      if (!row || typeof row !== 'object') continue
+      const r = row as Record<string, unknown>
+      const t = str(r.t) || str(r.text) || str(r.zh)
+      if (!t) continue
+      const blank = Boolean(r.blank) || t.replace(/\s/g, '').includes('____') || t === '…' || t === '...'
+      parts.push({ text: blank ? '____' : t, blank })
+    }
+  }
+  const blankCount = parts.filter((p) => p.blank).length
+  if (!sentenceEn || parts.length < 2 || blankCount !== 1) {
+    throw new Error('挖空中译格式不完整')
+  }
+  // Safety: non-blank parts must not contain the pack meaning string
+  const meaning = word.meaningZh.trim()
+  const leaked = parts.some(
+    (p) => !p.blank && meaning && p.text.includes(meaning.split(/[；;、]/)[0] ?? meaning),
+  )
+  if (leaked) {
+    // Soft fail → caller can use local fallback
+    throw new Error('挖空中译泄露了目标词释义')
+  }
+  return { sentenceEn, parts }
+}
+
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : ''
 }
