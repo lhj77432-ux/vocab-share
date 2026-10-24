@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
@@ -15,9 +18,13 @@ jobs:
           node-version: '22'
       - run: npm install
       - run: npm run build
+      # Avoid racing a prior github-pages deploy still finishing
+      - name: Settle before orphan publish
+        run: sleep 20
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           force_orphan: true
+          commit_message: 'deploy: ${{ github.sha }}'
