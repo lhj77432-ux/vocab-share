@@ -1,9 +1,9 @@
-/** Word lookup via website free AI connector (Puter Gemini Flash-Lite →
+/** Word lookup via free model (site → Puter) (Puter Gemini Flash-Lite →
  * Pollinations), then Free Dictionary / Wiktionary for English.
  * Cache: in-memory + localStorage for repeat lookups (~instant).
  */
 
-import { connectorChat } from './freeAiConnector'
+import { freeAiChat } from './freeAi'
 
 export type DictSense = {
   partOfSpeech: string
@@ -575,7 +575,7 @@ async function fetchLlmLookup(query: string, signal: AbortSignal): Promise<DictL
   const timer = setTimeout(() => timeoutLink.abort(), LLM_TIMEOUT_MS)
 
   try {
-    const text = await connectorChat({
+    const text = await freeAiChat({
       mode: 'vocab',
       user,
       system,

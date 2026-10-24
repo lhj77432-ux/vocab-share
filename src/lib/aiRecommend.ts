@@ -1,5 +1,5 @@
 import type { VocabWord } from '../data/dseWords'
-import { connectorChat, getFreeConnectorSettings } from './freeAiConnector'
+import { freeAiChat, getFreeAiSettings } from './freeAi'
 import { recommendToday, scoreWord } from './srs'
 import { todayStr } from './storage'
 import type { ApiSettings, AppProgress } from './types'
@@ -15,6 +15,8 @@ export type RecommendSource = 'ai' | 'local'
 export type RecommendItem = {
   word: VocabWord
   reasons: string[]
+  /** Example sentence from free model (or pack example as fallback) */
+  sentence?: string
   score?: number
 }
 
@@ -32,7 +34,7 @@ export type DailyRecommendCache = {
   count: number
   source: RecommendSource
   /** Stored as word ids + reason text for rebuild */
-  picks: { id: string; reason: string }[]
+  picks: { id: string; reason: string; sentence?: string }[]
 }
 
 /** Clamp a numeric count for model / local recommend calls. */
@@ -99,7 +101,7 @@ function rebuildFromCache(
     // Cache may only surface pack words — drop anything not exact in current DSE list
     const w = byId.get(p.id)
     if (!w) continue
-    items.push({ word: w, reasons: [p.reason || '今日推荐'] })
+    items.push({ word: w, reasons: [p.reason || '今日推荐'], sentence: p.sentence || w.example })
   }
   if (!items.length) return null
   return {
@@ -254,7 +256,12 @@ function mapModelPicksToDse(
     if (!w) continue // drop invented / unverified words — never show to user
     if (seen.has(w.id)) continue
     seen.add(w.id)
-    items.push({ word: w, reasons: [reason.slice(0, 80)] })
+    const sentence = typeof obj.sentence === 'string' ? obj.sentence.trim() : ''
+    items.push({
+      word: w,
+      reasons: [reason.slice(0, 80)],
+      sentence: sentence || w.example || undefined,
+    })
   }
   return items
 }
@@ -267,6 +274,7 @@ function localFallback(
   return recommendToday(words, progress, count).map((x) => ({
     word: x.word,
     reasons: x.reasons,
+    sentence: x.word.example,
     score: x.score,
   }))
 }
@@ -312,7 +320,7 @@ export async function fetchDailyAiRecommend(opts: {
     'HARD RULE: 只能从用户提供的候选词表中挑选。word 必须与候选里的英文原词完全一致（可大小写不同），id 必须是候选里的 id。',
     '严禁编造、联想、近义词替换或输出候选列表之外的任何单词。若不确定，跳过，不要瞎编。',
     '只输出 JSON 数组，不要 markdown，不要其它说明。',
-    '数组元素格式：{"id":"词条id","word":"与候选完全一致的英文原词","reason":"一句中文推荐理由"}',
+    '数组元素格式：{"id":"词条id","word":"与候选完全一致的英文原词","reason":"一句中文推荐理由","sentence":"一句含该词的英文例句"}',
     `恰好挑选 ${count} 个（若候选不足则能选几个选几个，宁可少也不要编造）。`,
     '优先：错词、生疏、久未复习、尚未学习；适当覆盖不同类别，避免全是同一类。',
   ].join('\n')
@@ -326,14 +334,14 @@ export async function fetchDailyAiRecommend(opts: {
   ].join('\n')
 
   try {
-    const reply = await connectorChat({
+    const reply = await freeAiChat({
       mode: 'analysis',
       user,
       system,
       temperature: 0.2,
       signal,
-      // Prefer free connector; allow caller api only if it is a custom keyed endpoint
-      api: api?.apiKey?.trim() ? api : getFreeConnectorSettings(),
+      // Prefer free model; allow caller api only if it is a custom keyed endpoint
+      api: api?.apiKey?.trim() ? api : getFreeAiSettings(),
     })
     const arr = extractJsonArray(reply)
     if (!arr) throw new Error('模型未返回可解析 JSON')
@@ -351,6 +359,7 @@ export async function fetchDailyAiRecommend(opts: {
         items.push({
           word: row.word,
           reasons: row.reasons.length ? row.reasons : ['本地补齐（过滤编造词后）'],
+          sentence: row.sentence || row.word.example,
         })
       }
     }
@@ -376,6 +385,7 @@ export async function fetchDailyAiRecommend(opts: {
       picks: items.map((x) => ({
         id: x.word.id,
         reason: x.reasons[0] ?? '模型推荐',
+        sentence: x.sentence,
       })),
     })
     return result
@@ -396,6 +406,7 @@ export async function fetchDailyAiRecommend(opts: {
       picks: items.map((x) => ({
         id: x.word.id,
         reason: x.reasons.join('；') || '本地推荐',
+        sentence: x.sentence || x.word.example,
       })),
     })
     return result

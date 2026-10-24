@@ -3,8 +3,14 @@ import { HashRouter, NavLink, Route, Routes, useSearchParams } from 'react-route
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
-import { FREE_CONNECTOR_LABEL } from './lib/freeAiConnector'
-import { AiConnectorPanel } from './components/AiConnectorPanel'
+import {
+  FREE_AI_LABEL,
+  freeAiCategorize,
+  freeAiEnrichWord,
+  freeAiQuizItem,
+  getFreeAiSettings,
+  type AiQuizItem,
+} from './lib/freeAi'
 import { lookupWord, type DictEntry } from './lib/dictionary'
 import { exportDocx, exportExcel, exportPdf } from './lib/export'
 import { addSentence, clearWrong, recordQuiz, recordSeen } from './lib/progressActions'
@@ -107,8 +113,6 @@ function Shell({ children }: { children: React.ReactNode }) {
           </button>
           <nav className="nav">
             <NavLink to="/" end>首页</NavLink>
-            <NavLink to="/play">玩</NavLink>
-            <NavLink to="/connector">连接器</NavLink>
             <NavLink to="/search">搜索</NavLink>
             <NavLink to="/favorites">收藏</NavLink>
             <NavLink to="/learn">学习</NavLink>
@@ -140,7 +144,10 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
       <section className="hero">
         <div>
           <h1>{pack.title}</h1>
-          <p>主能力是<strong>玩页插件</strong>：输入 → 连接器 → 免费模型 → 显现站上功能（生词／中译／英译／造句／学习入口）。本地 DSE 词表仍可学习／推荐。</p>
+          <p>
+            本站即通道：页面输入 → 免费模型（{FREE_AI_LABEL}，失败静默回退 Pollinations）→ 页面展示结果。
+            搜索一次返回英译／中译／例句；学习／今日推荐／归类／测验／造句均直连免费模型。本地 DSE 词表约 {pack.words.length} 词。
+          </p>
         </div>
         <div className="stats">
           <div className="stat"><b>{pack.words.length}</b><span>词条</span></div>
@@ -150,20 +157,16 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
         </div>
       </section>
 
-      <AiConnectorPanel variant="home" />
-
       <div className="card">
         <h3>快速入口</h3>
         <div className="row" style={{ marginTop: 8 }}>
-          <NavLink className="btn btn-primary" to="/play">玩 · 插件</NavLink>
-          <NavLink className="btn" to="/connector">连接器</NavLink>
+          <NavLink className="btn btn-primary" to="/search">搜索</NavLink>
+          <NavLink className="btn" to="/learn">学习</NavLink>
           <NavLink className="btn" to="/recommend">今日推荐</NavLink>
-          <NavLink className="btn" to="/search">单词搜索</NavLink>
-          <NavLink className="btn" to="/favorites">我的收藏</NavLink>
-          <NavLink className="btn" to="/learn">开始学习</NavLink>
+          <NavLink className="btn" to="/categories">归类</NavLink>
           <NavLink className="btn" to="/quiz">测验</NavLink>
-          <NavLink className="btn" to="/sentence">造句练习</NavLink>
-          <NavLink className="btn" to="/categories">单词归类</NavLink>
+          <NavLink className="btn" to="/sentence">造句</NavLink>
+          <NavLink className="btn" to="/favorites">收藏</NavLink>
         </div>
       </div>
     </>
@@ -180,35 +183,87 @@ function Learn({
 }) {
   const [params] = useSearchParams()
   const wordParam = params.get('word')
-  const startIdx = useMemo(() => {
-    if (!wordParam) return 0
-    const found = words.findIndex((x) => x.id === wordParam || x.word.toLowerCase() === wordParam.toLowerCase())
-    return found >= 0 ? found : 0
-  }, [wordParam, words])
-  const [i, setI] = useState(startIdx)
+  const [items, setItems] = useState<{ word: VocabWord; sentence: string; tip?: string }[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [i, setI] = useState(0)
   const [show, setShow] = useState(false)
+
+  const loadAi = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetchDailyAiRecommend({
+        words,
+        progress,
+        api: getFreeAiSettings(),
+        count: 8,
+        forceRefresh: true,
+      })
+      const enriched: { word: VocabWord; sentence: string; tip?: string }[] = []
+      for (const it of res.items.slice(0, 8)) {
+        try {
+          const e = await freeAiEnrichWord(it.word)
+          enriched.push({ word: it.word, sentence: e.sentence || it.sentence || it.word.example, tip: e.tip })
+        } catch {
+          enriched.push({ word: it.word, sentence: it.sentence || it.word.example })
+        }
+      }
+      if (!enriched.length) throw new Error('暂无推荐，请稍后再试')
+      setItems(enriched)
+      setI(0)
+      setShow(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [words, progress])
+
   useEffect(() => {
-    setI(startIdx)
-    setShow(false)
-  }, [startIdx])
-  const w = words[i % words.length]
-  if (!w) return <div className="card">词表为空</div>
+    if (wordParam) {
+      const found = words.find((x) => x.id === wordParam || x.word.toLowerCase() === wordParam.toLowerCase())
+      if (found) {
+        setItems([{ word: found, sentence: found.example }])
+        setI(0)
+        ;(async () => {
+          try {
+            const e = await freeAiEnrichWord(found)
+            setItems([{ word: found, sentence: e.sentence || found.example, tip: e.tip }])
+          } catch { /* keep pack example */ }
+        })()
+        return
+      }
+    }
+    void loadAi()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wordParam, words])
+
+  const cur = items[i]
+  if (loading && !cur) {
+    return <div className="card"><h2>学习</h2><p className="muted">正在请免费模型推荐今日学习…</p></div>
+  }
+  if (!cur) {
+    return (
+      <div className="card">
+        <h2>学习</h2>
+        {error ? <p className="warn">{error}</p> : <p className="muted">暂无内容</p>}
+        <button className="btn btn-primary" type="button" onClick={() => void loadAi()}>请免费模型推荐</button>
+      </div>
+    )
+  }
+  const w = cur.word
 
   const reveal = () => {
     if (!show) {
       setShow(true)
       const next = recordSeen({ ...progress, byWord: { ...progress.byWord }, wrongIds: [...progress.wrongIds], dayLogs: progress.dayLogs.map((d) => ({ ...d })), sentences: [...progress.sentences] }, w.id)
       setProgress(next)
-    } else {
-      setShow(false)
-    }
+    } else setShow(false)
   }
 
   const speak = () => {
-    if (!('speechSynthesis' in window)) {
-      toast('浏览器不支持发音')
-      return
-    }
+    if (!('speechSynthesis' in window)) { toast('浏览器不支持发音'); return }
     const u = new SpeechSynthesisUtterance(w.word)
     u.lang = 'en-US'
     speechSynthesis.cancel()
@@ -217,7 +272,14 @@ function Learn({
 
   return (
     <div className="card">
-      <h2>学习 · {i + 1}/{words.length}</h2>
+      <h2>学习 · {i + 1}/{items.length}</h2>
+      <p className="muted">免费模型推荐今日学什么；每词下方附造句。点「换一批」可再请模型。</p>
+      <div className="row" style={{ marginBottom: 8 }}>
+        <button className="btn" type="button" disabled={loading} onClick={() => void loadAi()}>
+          {loading ? '推荐中…' : '换一批推荐'}
+        </button>
+      </div>
+      {error ? <p className="warn">{error}</p> : null}
       <span className="tag">{w.category}</span>
       <div className="flip-wrap">
         <div
@@ -235,26 +297,21 @@ function Learn({
           </div>
           <div className="flip-face back">
             <div><b style={{ fontSize: '1.25rem' }}>{w.meaningZh}</b></div>
-            <p className="muted" style={{ marginTop: 8 }}>{w.example}</p>
+            {cur.tip ? <p className="muted" style={{ marginTop: 8 }}>{cur.tip}</p> : null}
           </div>
         </div>
       </div>
+      <div className="card" style={{ marginTop: 12, background: 'var(--bg)' }}>
+        <h3 style={{ marginTop: 0 }}>造句</h3>
+        <p style={{ marginBottom: 0 }}>{cur.sentence}</p>
+      </div>
       <div className="row" style={{ marginTop: 12, justifyContent: 'center' }}>
-        <button className="btn" type="button" onClick={() => { setShow(false); setI((x) => (x - 1 + words.length) % words.length) }}>上一个</button>
+        <button className="btn" type="button" onClick={() => { setShow(false); setI((x) => (x - 1 + items.length) % items.length) }}>上一个</button>
         <button className="btn" type="button" onClick={speak}>🔊 发音</button>
         {!show ? (
           <button className="btn btn-primary" type="button" onClick={reveal}>揭晓</button>
         ) : (
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => {
-              setShow(false)
-              setI((x) => (x + 1) % words.length)
-            }}
-          >
-            下一个
-          </button>
+          <button className="btn btn-primary" type="button" onClick={() => { setShow(false); setI((x) => (x + 1) % items.length) }}>下一个</button>
         )}
       </div>
     </div>
@@ -269,62 +326,84 @@ function Quiz({
   progress: AppProgress
   setProgress: (p: AppProgress) => void
 }) {
-  const [queue, setQueue] = useState(() => [...words].sort(() => Math.random() - 0.5))
-  const [choice, setChoice] = useState<string | null>(null)
-  const cur = queue[0]
-  const options = useMemo(() => {
-    if (!cur) return []
-    const others = words.filter((x) => x.id !== cur.id).sort(() => Math.random() - 0.5).slice(0, 3)
-    return [...others, cur].sort(() => Math.random() - 0.5)
-  }, [cur, words])
+  const [item, setItem] = useState<AiQuizItem | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [choice, setChoice] = useState<number | null>(null)
+  const [err, setErr] = useState('')
+  const [score, setScore] = useState({ ok: 0, total: 0 })
 
-  if (!cur) {
-    return (
-      <div className="card">
-        <h2>本轮测验完成</h2>
-        <button className="btn btn-primary" type="button" onClick={() => setQueue([...words].sort(() => Math.random() - 0.5))}>再来一轮</button>
-      </div>
-    )
-  }
+  const nextQ = useCallback(async () => {
+    setBusy(true)
+    setErr('')
+    setChoice(null)
+    try {
+      const q = await freeAiQuizItem(words)
+      setItem(q)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+      setItem(null)
+    } finally {
+      setBusy(false)
+    }
+  }, [words])
+
+  useEffect(() => {
+    void nextQ()
+  }, [nextQ])
+
+  const packWord = item ? words.find((w) => w.word.toLowerCase() === item.word.toLowerCase()) : undefined
 
   return (
     <div className="card">
-      <h2>测验 · 剩余 {queue.length}</h2>
-      <div className="word-big">{cur.word}</div>
-      <p className="muted">选出正确中文意思</p>
-      <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-        {options.map((o) => {
-          const selected = choice === o.id
-          const correct = choice && o.id === cur.id
-          const wrong = selected && o.id !== cur.id
-          return (
-            <button
-              key={o.id}
-              type="button"
-              className={`btn quiz-opt${correct ? ' correct' : ''}${wrong ? ' wrong' : ''}`}
-              style={{
-                borderColor: correct ? 'var(--ok)' : wrong ? 'var(--bad)' : undefined,
-              }}
-              disabled={!!choice}
-              onClick={() => {
-                setChoice(o.id)
-                const ok = o.id === cur.id
-                const next = recordQuiz(
-                  { ...progress, byWord: { ...progress.byWord }, wrongIds: [...progress.wrongIds], dayLogs: progress.dayLogs.map((d) => ({ ...d })), sentences: [...progress.sentences] },
-                  cur.id,
-                  ok,
-                )
-                setProgress(next)
-                setTimeout(() => {
-                  setChoice(null)
-                  setQueue((q) => q.slice(1))
-                }, 650)
-              }}
-            >
-              {o.meaningZh}
-            </button>
-          )
-        })}
+      <h2>测验</h2>
+      <p className="muted">题目由免费模型根据站内 DSE 词表现场出题（页面 → Puter → 页面）。正确 {score.ok}/{score.total}</p>
+      {err ? <p className="warn">{err}</p> : null}
+      {busy && !item ? <p className="muted">正在出题…</p> : null}
+      {item ? (
+        <>
+          <div className="word-big">{item.word}</div>
+          <p className="muted">{item.questionZh}</p>
+          <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+            {item.options.map((opt, idx) => {
+              const selected = choice === idx
+              const correct = choice !== null && idx === item.answerIndex
+              const wrong = selected && idx !== item.answerIndex
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  className={`btn quiz-opt${correct ? ' correct' : ''}${wrong ? ' wrong' : ''}`}
+                  style={{ borderColor: correct ? 'var(--ok)' : wrong ? 'var(--bad)' : undefined }}
+                  disabled={choice !== null || busy}
+                  onClick={() => {
+                    setChoice(idx)
+                    const ok = idx === item.answerIndex
+                    setScore((s) => ({ ok: s.ok + (ok ? 1 : 0), total: s.total + 1 }))
+                    if (packWord) {
+                      const next = recordQuiz(
+                        { ...progress, byWord: { ...progress.byWord }, wrongIds: [...progress.wrongIds], dayLogs: progress.dayLogs.map((d) => ({ ...d })), sentences: [...progress.sentences] },
+                        packWord.id,
+                        ok,
+                      )
+                      setProgress(next)
+                    }
+                    setTimeout(() => { void nextQ() }, 900)
+                  }}
+                >
+                  {opt}
+                </button>
+              )
+            })}
+          </div>
+          {choice !== null && item.explainZh ? (
+            <p className="muted" style={{ marginTop: 10 }}>{item.explainZh}</p>
+          ) : null}
+        </>
+      ) : null}
+      <div className="row" style={{ marginTop: 12 }}>
+        <button className="btn" type="button" disabled={busy} onClick={() => void nextQ()}>
+          {busy ? '出题中…' : '下一题'}
+        </button>
       </div>
     </div>
   )
@@ -372,7 +451,7 @@ function Sentence({
     <div className="card">
       <h2>造句练习（DSE）</h2>
       <p className="muted">
-        一键连免费大模型（默认 Puter · Gemini Flash-Lite）思考造句；也可自己写，再请 AI 点评。失败时会静默改走备用通道。
+        页面直连免费模型造句／点评（Puter · Gemini Flash-Lite，失败静默回退 Pollinations）。也可自己先写再点评。
       </p>
       <span className="tag">{w.category}</span>
       <div className="word-big">{w.word}</div>
@@ -582,8 +661,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">与首页<strong>免费 AI 连接器</strong>同一自动链路（{FREE_CONNECTOR_LABEL}）：任意英文／中文 → 生词／中译／英译／例句。无需填 key；结果缓存；失败时可回退网上词典。也可用下方本地 DSE 词表筛选。</p>
-        <p className="muted" style={{ marginTop: 6 }}>想要更像插件的一键面板？打开 <NavLink to="/connector">连接器</NavLink>。</p>
+        <p className="muted">页面直连免费模型（{FREE_AI_LABEL}）：输入英文／中文 → 一次返回<strong>英译 + 中译 + 例句</strong>。无需 API key；结果缓存；失败时可回退网上词典。下方可筛本地 DSE 词表。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -718,7 +796,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                   ))}
                 </ul>
 
-                <h4 className="dict-section">例句</h4>
+                <h4 className="dict-section">例句（与释义同次返回）</h4>
                 {examples.length > 0 ? (
                   <ul className="dict-examples">
                     {examples.map((m, mi) => (
@@ -930,7 +1008,7 @@ function FavoritesPage() {
                 </li>
               ))}
             </ul>
-            <h4 className="dict-section">例句</h4>
+            <h4 className="dict-section">例句（与释义同次返回）</h4>
             {detail.meanings.some((m) => m.example) ? (
               <ul className="dict-examples">
                 {detail.meanings.filter((m) => m.example).slice(0, 6).map((m, mi) => (
@@ -962,6 +1040,19 @@ function FavoritesPage() {
 
 function Categories({ words }: { words: VocabWord[] }) {
   const [cat, setCat] = useState<WordCategory | '全部'>('全部')
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [aiResult, setAiResult] = useState<{
+    category: string
+    reason: string
+    word?: string
+    meaningZh?: string
+    sentence?: string
+  } | null>(null)
+  const [detail, setDetail] = useState<VocabWord | null>(null)
+  const [detailExtra, setDetailExtra] = useState<{ sentence: string; tip?: string } | null>(null)
+  const [detailBusy, setDetailBusy] = useState(false)
+
   const counts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const c of ALL_CATEGORIES) m[c] = 0
@@ -970,12 +1061,69 @@ function Categories({ words }: { words: VocabWord[] }) {
   }, [words])
   const filtered = cat === '全部' ? words : words.filter((w) => w.category === cat)
 
+  const runCategorize = async () => {
+    const input = q.trim()
+    if (!input) return
+    setBusy(true)
+    setAiResult(null)
+    try {
+      const r = await freeAiCategorize(input, [...ALL_CATEGORIES])
+      setAiResult(r)
+      if (ALL_CATEGORIES.includes(r.category as WordCategory)) {
+        setCat(r.category as WordCategory)
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openWord = async (w: VocabWord) => {
+    setDetail(w)
+    setDetailExtra(null)
+    setDetailBusy(true)
+    try {
+      const e = await freeAiEnrichWord(w)
+      setDetailExtra({ sentence: e.sentence || w.example, tip: e.tip })
+    } catch {
+      setDetailExtra({ sentence: w.example })
+    } finally {
+      setDetailBusy(false)
+    }
+  }
+
   return (
     <>
       <div className="card">
         <h2>单词归类</h2>
-        <p className="muted">按 DSE 常见主题归类浏览，方便专题复习。</p>
-        <div className="cat-grid">
+        <p className="muted">输入任意内容，由免费模型归入 DSE 主题；也可浏览本地分类。点开词条会再请模型生成释义辅助与造句。</p>
+        <form
+          className="row"
+          style={{ marginTop: 8 }}
+          onSubmit={(e) => { e.preventDefault(); void runCategorize() }}
+        >
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="例如：sustainable / 可持续发展"
+            style={{ flex: 1, minWidth: 180 }}
+            aria-label="归类输入"
+          />
+          <button className="btn btn-primary" type="submit" disabled={busy}>
+            {busy ? '归类中…' : '免费模型归类'}
+          </button>
+        </form>
+        {aiResult ? (
+          <div className="card" style={{ marginTop: 12, background: 'var(--bg)' }}>
+            <p><b>类别：</b>{aiResult.category}</p>
+            {aiResult.word ? <p><b>英文：</b>{aiResult.word}</p> : null}
+            {aiResult.meaningZh ? <p><b>中文：</b>{aiResult.meaningZh}</p> : null}
+            {aiResult.sentence ? <p><b>例句：</b>{aiResult.sentence}</p> : null}
+            {aiResult.reason ? <p className="muted">{aiResult.reason}</p> : null}
+          </div>
+        ) : null}
+        <div className="cat-grid" style={{ marginTop: 12 }}>
           <button type="button" className={`cat-card ${cat === '全部' ? 'on' : ''}`} onClick={() => setCat('全部')}>
             <b>全部</b><div className="muted">{words.length} 词</div>
           </button>
@@ -989,7 +1137,7 @@ function Categories({ words }: { words: VocabWord[] }) {
       <div className="card">
         <h3>{cat} · {filtered.length} 词</h3>
         <table className="table">
-          <thead><tr><th>单词</th><th>词性</th><th>中文</th><th>主题</th></tr></thead>
+          <thead><tr><th>单词</th><th>词性</th><th>中文</th><th>主题</th><th></th></tr></thead>
           <tbody>
             {filtered.map((w) => (
               <tr key={w.id}>
@@ -997,11 +1145,35 @@ function Categories({ words }: { words: VocabWord[] }) {
                 <td>{w.pos}</td>
                 <td>{w.meaningZh}</td>
                 <td>{w.theme ?? '—'}</td>
+                <td><button className="btn" type="button" onClick={() => void openWord(w)}>打开</button></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {detail ? (
+        <div className="mask show" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setDetail(null) }}>
+          <div className="modal dict-modal">
+            <div className="modal-top">
+              <h3>{detail.word}</h3>
+              <button className="icon-btn" type="button" aria-label="关闭" onClick={() => setDetail(null)}>✕</button>
+            </div>
+            <p><b>{detail.meaningZh}</b> · {detail.pos} · {detail.category}</p>
+            {detailBusy ? <p className="muted">免费模型生成中…</p> : null}
+            {detailExtra ? (
+              <>
+                {detailExtra.tip ? <p className="muted">{detailExtra.tip}</p> : null}
+                <h4 className="dict-section">造句</h4>
+                <p>{detailExtra.sentence}</p>
+              </>
+            ) : null}
+            <div className="modal-actions">
+              <NavLink className="btn" to={`/learn?word=${encodeURIComponent(detail.id)}`} onClick={() => setDetail(null)}>去学习</NavLink>
+              <button className="btn btn-primary" type="button" onClick={() => setDetail(null)}>关闭</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   )
 }
@@ -1078,7 +1250,7 @@ function Recommend({
 
   const sourceLabel =
     result?.source === 'ai'
-      ? '外接模型推荐 · 仅 DSE 范围'
+      ? '免费模型推荐 · 仅 DSE 范围'
       : result?.source === 'local'
         ? '本地推荐（模型不可用时的回退）· 仅 DSE 范围'
         : '仅 DSE 范围'
@@ -1087,7 +1259,7 @@ function Recommend({
     <div className="card">
       <h2>今日推荐</h2>
       <p className="muted">
-        由网站免费 AI 连接器从站内 DSE 词表精选今日背单词（不准编假词）。可自填每天背几个；同一天同数量会缓存，点「重新推荐」可再请模型挑。
+        页面直连免费模型，仅从站内 DSE 词表精选今日背单词（不准编假词）。每条含中文意思、例句与推荐理由。可自填数量；同天同数量会缓存。
       </p>
 
       <div className="row" style={{ marginTop: 10, marginBottom: 8 }}>
@@ -1151,14 +1323,15 @@ function Recommend({
           <tr>
             <th>#</th>
             <th>单词</th>
-            <th>意思</th>
+            <th>中文意思</th>
+            <th>例句</th>
             <th>为何推荐</th>
           </tr>
         </thead>
         <tbody>
           {list.length === 0 && !loading ? (
             <tr>
-              <td colSpan={4} className="muted">
+              <td colSpan={5} className="muted">
                 暂无推荐，请输入数量后点「生成今日推荐」。
               </td>
             </tr>
@@ -1170,6 +1343,7 @@ function Recommend({
                   <b>{item.word.word}</b>
                 </td>
                 <td>{item.word.meaningZh}</td>
+                <td>{item.sentence || item.word.example}</td>
                 <td>{item.reasons.join('；')}</td>
               </tr>
             ))
@@ -1503,44 +1677,6 @@ function SharePage({ pack }: { pack: WordListPack }) {
   )
 }
 
-function PlayPage() {
-  return (
-    <>
-      <AiConnectorPanel variant="play" />
-      <div className="card">
-        <h3>还想练本地词表？</h3>
-        <p className="muted">玩页只做「输入→连接器→模型→显现站上功能」；学习／测验／今日推荐等全部保留。</p>
-        <div className="row" style={{ marginTop: 8 }}>
-          <NavLink className="btn" to="/learn">学习</NavLink>
-          <NavLink className="btn" to="/quiz">测验</NavLink>
-          <NavLink className="btn" to="/recommend">今日推荐</NavLink>
-          <NavLink className="btn" to="/favorites">收藏</NavLink>
-          <NavLink className="btn" to="/connector">完整连接器</NavLink>
-        </div>
-      </div>
-    </>
-  )
-}
-
-function ConnectorPage() {
-  return (
-    <>
-      <AiConnectorPanel variant="full" />
-      <div className="card">
-        <h3>其它仍保留的功能</h3>
-        <p className="muted">学习／收藏／今日推荐／本地 DSE 词表／测验／错词本／导出／分享均未删除。推荐路径仍只从站内 DSE 词表选词。想更极简（单输入显现功能）请开「玩」页。</p>
-        <div className="row" style={{ marginTop: 8 }}>
-          <NavLink className="btn btn-primary" to="/play">玩 · 插件</NavLink>
-          <NavLink className="btn" to="/recommend">今日推荐</NavLink>
-          <NavLink className="btn" to="/learn">学习</NavLink>
-          <NavLink className="btn" to="/search">搜索</NavLink>
-          <NavLink className="btn" to="/settings">设置</NavLink>
-        </div>
-      </div>
-    </>
-  )
-}
-
 function Settings() {
   const [dark, setDark] = useTheme()
   return (
@@ -1553,13 +1689,13 @@ function Settings() {
         </button>
       </div>
       <p style={{ marginTop: 8 }}>
-        <b>当前：免费 Puter.js</b>
+        <b>后端：免费 Puter.js</b>
         <span className="muted">（google/gemini-3.1-flash-lite · 开发者无需密钥）</span>
       </p>
       <p className="muted" style={{ marginTop: 6 }}>
-        默认经 Puter 调用 Gemini 3.1 Flash-Lite（User-Pays：首次可能需登录 Puter，费用由用户账户额度承担，站点开发者不付 API 费）。失败时自动回退 Pollinations。小模型训好后再换自建推理。
+        网站本身即通道：搜索／学习／今日推荐／归类／测验／造句均页面直连免费模型。失败时静默回退 Pollinations。
+        首次可能需登录 Puter（User-Pays）。尚未接入本地训练的小模型权重。
       </p>
-      <p className="muted">现有学习／测验／造句／归类／搜索／收藏／导出／分享流程不受影响。</p>
     </div>
   )
 }
@@ -1578,8 +1714,6 @@ function AppInner() {
     <Shell>
       <Routes>
         <Route path="/" element={<Home pack={pack} shared={shared} progress={progress} />} />
-        <Route path="/play" element={<PlayPage />} />
-        <Route path="/connector" element={<ConnectorPage />} />
         <Route path="/search" element={<SearchWords words={pack.words} />} />
         <Route path="/favorites" element={<FavoritesPage />} />
         <Route path="/learn" element={<Learn words={pack.words} progress={progress} setProgress={persist} />} />
