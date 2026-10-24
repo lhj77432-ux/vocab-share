@@ -11,7 +11,7 @@ import { DEFAULT_API, isPuterSettings, loadApiSettings } from './storage'
 import type { ApiSettings, StudyMode } from './types'
 
 export const FREE_AI_MODEL = DEFAULT_API.model
-export const FREE_AI_LABEL = 'Puter · Gemini Flash-Lite（免费）'
+export const FREE_AI_LABEL = '本站服务'
 
 /** Always prefer Puter free path unless user saved a custom keyed endpoint. */
 export function getFreeAiSettings(): ApiSettings {

@@ -58,7 +58,7 @@ async function waitForPuter(timeoutMs = 10000): Promise<PuterGlobal> {
     if (p?.ai?.chat) return p
     await new Promise((r) => setTimeout(r, 40))
   }
-  throw new Error('Puter.js 未加载，请刷新页面后重试')
+  throw new Error('生成服务未就绪，请刷新页面后重试')
 }
 
 async function puterChat(
@@ -81,7 +81,7 @@ async function puterChat(
     },
   )
   const text = extractPuterText(response)
-  if (!text) throw new Error('Puter 返回空内容')
+  if (!text) throw new Error('生成服务返回空内容')
   return text
 }
 
@@ -149,7 +149,7 @@ export async function chatCompletion(
         const msg = err instanceof Error ? err.message : String(err)
         throw new Error(
           msg.includes('auth') || msg.includes('Auth') || msg.includes('sign')
-            ? '请先完成 Puter 登录窗口（开发者无需 API 密钥），或稍后再试'
+            ? '请先完成登录窗口，或稍后再试'
             : msg || 'AI 暂时不可用，请稍后再试',
         )
       }

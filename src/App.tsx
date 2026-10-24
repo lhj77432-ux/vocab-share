@@ -4,7 +4,6 @@ import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWor
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
 import {
-  FREE_AI_LABEL,
   freeAiCategorize,
   freeAiEnrichWord,
   freeAiQuizItem,
@@ -145,8 +144,7 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
         <div>
           <h1>{pack.title}</h1>
           <p>
-            本站即通道：页面输入 → 免费模型（{FREE_AI_LABEL}，失败静默回退 Pollinations）→ 页面展示结果。
-            搜索一次返回英译／中译／例句；学习／今日推荐／归类／测验／造句均直连免费模型。本地 DSE 词表约 {pack.words.length} 词。
+            本站即通道：输入 → 生成结果 → 展示。搜索一次返回英译／中译／例句；学习／今日推荐／归类／测验／造句均由本站服务生成。本地 DSE 词表约 {pack.words.length} 词。
           </p>
         </div>
         <div className="stats">
@@ -241,14 +239,14 @@ function Learn({
 
   const cur = items[i]
   if (loading && !cur) {
-    return <div className="card"><h2>学习</h2><p className="muted">正在请免费模型推荐今日学习…</p></div>
+    return <div className="card"><h2>学习</h2><p className="muted">正在生成今日学习推荐…</p></div>
   }
   if (!cur) {
     return (
       <div className="card">
         <h2>学习</h2>
         {error ? <p className="warn">{error}</p> : <p className="muted">暂无内容</p>}
-        <button className="btn btn-primary" type="button" onClick={() => void loadAi()}>请免费模型推荐</button>
+        <button className="btn btn-primary" type="button" onClick={() => void loadAi()}>生成推荐</button>
       </div>
     )
   }
@@ -273,7 +271,7 @@ function Learn({
   return (
     <div className="card">
       <h2>学习 · {i + 1}/{items.length}</h2>
-      <p className="muted">免费模型推荐今日学什么；每词下方附造句。点「换一批」可再请模型。</p>
+      <p className="muted">由本站服务推荐今日学什么；每词下方附造句。点「换一批」可再生成。</p>
       <div className="row" style={{ marginBottom: 8 }}>
         <button className="btn" type="button" disabled={loading} onClick={() => void loadAi()}>
           {loading ? '推荐中…' : '换一批推荐'}
@@ -356,7 +354,7 @@ function Quiz({
   return (
     <div className="card">
       <h2>测验</h2>
-      <p className="muted">题目由免费模型根据站内 DSE 词表现场出题（页面 → Puter → 页面）。正确 {score.ok}/{score.total}</p>
+      <p className="muted">题目由本站服务根据站内 DSE 词表现场出题。正确 {score.ok}/{score.total}</p>
       {err ? <p className="warn">{err}</p> : null}
       {busy && !item ? <p className="muted">正在出题…</p> : null}
       {item ? (
@@ -451,7 +449,7 @@ function Sentence({
     <div className="card">
       <h2>造句练习（DSE）</h2>
       <p className="muted">
-        页面直连免费模型造句／点评（Puter · Gemini Flash-Lite，失败静默回退 Pollinations）。也可自己先写再点评。
+        由本站服务造句／点评。也可自己先写再点评。
       </p>
       <span className="tag">{w.category}</span>
       <div className="word-big">{w.word}</div>
@@ -465,11 +463,11 @@ function Sentence({
           disabled={busy}
           onClick={async () => {
             setBusy(true)
-            setFeedback('正在请免费大模型造句…')
+            setFeedback('正在生成造句…')
             try {
               const sentence = await generateAiSentence(w, api)
               setText(sentence)
-              setFeedback('已填入模型造句，可直接保存或再改。首次可能需完成 Puter 登录。')
+              setFeedback('已填入造句，可直接保存或再改。首次使用可能需完成登录窗口。')
             } catch (e) {
               setFeedback(e instanceof Error ? e.message : String(e))
             } finally {
@@ -661,7 +659,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
     <>
       <div className="card">
         <h2>单词搜索</h2>
-        <p className="muted">页面直连免费模型（{FREE_AI_LABEL}）：输入英文／中文 → 一次返回<strong>英译 + 中译 + 例句</strong>。无需 API key；结果缓存；失败时可回退网上词典。下方可筛本地 DSE 词表。</p>
+        <p className="muted">由本站服务生成：输入英文／中文 → 一次返回<strong>英译 + 中译 + 例句</strong>。结果可缓存；失败时可回退网上词典。下方可筛本地 DSE 词表。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -746,7 +744,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
             </div>
 
             {loading ? (
-              <p className="muted">正在用免费 AI 生成「{lastLookedUp || q.trim()}」的中译与英译…（首次约数秒，缓存后几乎瞬时）</p>
+              <p className="muted">正在生成「{lastLookedUp || q.trim()}」的中译与英译…（首次约数秒，缓存后几乎瞬时）</p>
             ) : entry ? (
               <>
                 <div className="dict-head">
@@ -812,7 +810,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
 
                 <p className="muted" style={{ fontSize: '0.8rem', marginTop: 12 }}>
                   {entry.provider === 'llm' || entry.provider === 'cache' ? (
-                    <>来源：免费 AI（Puter · Gemini 3.1 Flash-Lite · 开发者无需密钥）· 结果已本地缓存</>
+                    <>来源：本站服务 · 结果已本地缓存</>
                   ) : entry.provider === 'wiktionary' ? (
                     <>
                       来源：
@@ -834,7 +832,7 @@ function SearchWords({ words }: { words: VocabWord[] }) {
                       {' · '}Free Dictionary（AI 失败后的英文备用）
                     </>
                   ) : (
-                    <>数据来自网上词典备用（无需密钥）</>
+                    <>数据来自网上词典备用</>
                   )}
                 </p>
               </>
@@ -1097,7 +1095,7 @@ function Categories({ words }: { words: VocabWord[] }) {
     <>
       <div className="card">
         <h2>单词归类</h2>
-        <p className="muted">输入任意内容，由免费模型归入 DSE 主题；也可浏览本地分类。点开词条会再请模型生成释义辅助与造句。</p>
+        <p className="muted">输入任意内容，由本站服务归入 DSE 主题；也可浏览本地分类。点开词条会再生成释义辅助与造句。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -1111,7 +1109,7 @@ function Categories({ words }: { words: VocabWord[] }) {
             aria-label="归类输入"
           />
           <button className="btn btn-primary" type="submit" disabled={busy}>
-            {busy ? '归类中…' : '免费模型归类'}
+            {busy ? '归类中…' : '智能归类'}
           </button>
         </form>
         {aiResult ? (
@@ -1159,7 +1157,7 @@ function Categories({ words }: { words: VocabWord[] }) {
               <button className="icon-btn" type="button" aria-label="关闭" onClick={() => setDetail(null)}>✕</button>
             </div>
             <p><b>{detail.meaningZh}</b> · {detail.pos} · {detail.category}</p>
-            {detailBusy ? <p className="muted">免费模型生成中…</p> : null}
+            {detailBusy ? <p className="muted">生成中…</p> : null}
             {detailExtra ? (
               <>
                 {detailExtra.tip ? <p className="muted">{detailExtra.tip}</p> : null}
@@ -1250,7 +1248,7 @@ function Recommend({
 
   const sourceLabel =
     result?.source === 'ai'
-      ? '免费模型推荐 · 仅 DSE 范围'
+      ? '本站推荐 · 仅 DSE 范围'
       : result?.source === 'local'
         ? '本地推荐（模型不可用时的回退）· 仅 DSE 范围'
         : '仅 DSE 范围'
@@ -1259,7 +1257,7 @@ function Recommend({
     <div className="card">
       <h2>今日推荐</h2>
       <p className="muted">
-        页面直连免费模型，仅从站内 DSE 词表精选今日背单词（不准编假词）。每条含中文意思、例句与推荐理由。可自填数量；同天同数量会缓存。
+        由本站服务从站内 DSE 词表精选今日背单词。每条含中文意思、例句与推荐理由。可自填数量；同天同数量会缓存。
       </p>
 
       <div className="row" style={{ marginTop: 10, marginBottom: 8 }}>
@@ -1689,12 +1687,12 @@ function Settings() {
         </button>
       </div>
       <p style={{ marginTop: 8 }}>
-        <b>后端：免费 Puter.js</b>
-        <span className="muted">（google/gemini-3.1-flash-lite · 开发者无需密钥）</span>
+        <b>生成服务：本站通道</b>
+        <span className="muted">（输入 → 生成结果 → 展示）</span>
       </p>
       <p className="muted" style={{ marginTop: 6 }}>
-        网站本身即通道：搜索／学习／今日推荐／归类／测验／造句均页面直连免费模型。失败时静默回退 Pollinations。
-        首次可能需登录 Puter（User-Pays）。尚未接入本地训练的小模型权重。
+        本站即通道：搜索／学习／今日推荐／归类／测验／造句均由本站服务生成。
+        首次使用可能需完成登录窗口。尚未接入本地训练权重。
       </p>
     </div>
   )
