@@ -50,7 +50,7 @@ export function AbcdChoices({
   onPick: (idx: number, correct: boolean) => void
 }) {
   return (
-    <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 10, gap: 8 }}>
+    <div className="row quiz-options" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 10, gap: 8 }}>
       {choices.map((c, idx) => {
         const label = String.fromCharCode(65 + idx)
         const selected = picked === idx
@@ -113,7 +113,7 @@ export function SensePracticeCard({
   const [picked, setPicked] = useState<number | null>(null)
 
   return (
-    <div className="card" style={{ marginTop: 12, background: 'var(--bg)' }}>
+    <div className="card sense-card" style={{ marginTop: 12, background: 'var(--bg)' }}>
       <div className="word-big" style={{ fontSize: '1.6rem' }}>
         {word.word}
       </div>
