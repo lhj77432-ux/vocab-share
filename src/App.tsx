@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { HashRouter, NavLink, Route, Routes, useSearchParams } from 'react-router-dom'
+import { HashRouter, NavLink, Route, Routes, useLocation, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
@@ -99,48 +99,100 @@ function usePack(): [WordListPack, (p: WordListPack) => void, boolean] {
   return [pack, setPack, shared]
 }
 
+const NAV_GROUPS = [
+  {
+    label: '学习',
+    links: [
+      { to: '/', label: '首页总览', end: true },
+      { to: '/search', label: '查单词' },
+      { to: '/recommend', label: '今日新词' },
+      { to: '/learn', label: '翻转学习卡' },
+      { to: '/quiz', label: '连续词义测验' },
+      { to: '/sentence', label: '造句与点评' },
+    ],
+  },
+  {
+    label: '我的词库',
+    links: [
+      { to: '/favorites', label: '我的收藏' },
+      { to: '/categories', label: '主题归类' },
+      { to: '/wrong', label: '错词本' },
+    ],
+  },
+  {
+    label: '记录与工具',
+    links: [
+      { to: '/week', label: '本周学习分析' },
+      { to: '/export', label: '导出词表' },
+      { to: '/share', label: '分享当前词表' },
+      { to: '/settings', label: '设置与数据说明' },
+    ],
+  },
+]
+
+const ROUTE_META: Record<string, { title: string; description: string }> = {
+  '/': { title: '学习总览', description: '查看词表规模、学习记录，并前往需要的功能。' },
+  '/search': { title: '查单词', description: '搜索英文或中文，获取双语释义、例句并收藏。' },
+  '/favorites': { title: '我的收藏', description: '查看你在搜索页保存的单词与双语释义。' },
+  '/learn': { title: '翻转学习卡', description: '先看英文，再揭晓中文词义与记忆提示。' },
+  '/quiz': { title: '连续词义测验', description: '结合例句挖空选择中文释义，作答后自动进入下一题。' },
+  '/sentence': { title: '造句与点评', description: '围绕目标词写英文句子，可生成、保存或请求点评。' },
+  '/categories': { title: '主题归类', description: '按 DSE 主题浏览词表，或让智能服务协助归类。' },
+  '/recommend': { title: '今日新词', description: '设定每日新词数量，完成挖空与词义练习。' },
+  '/wrong': { title: '错词本', description: '集中查看测验中答错的词，掌握后可手动移出。' },
+  '/week': { title: '本周学习分析', description: '查看近七天的学习次数、答题表现与薄弱词。' },
+  '/export': { title: '导出词表', description: '勾选词条，导出为 PDF、Excel 或 Word 文件。' },
+  '/share': { title: '分享当前词表', description: '生成包含完整词表的公开链接并复制给他人。' },
+  '/settings': { title: '设置与数据说明', description: '切换外观，了解生成服务与本机数据存储方式。' },
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   const [dark, setDark] = useTheme()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const location = useLocation()
+  const meta = ROUTE_META[location.pathname] ?? ROUTE_META['/']
+  useEffect(() => setMenuOpen(false), [location.pathname])
   return (
-    <>
-      <header className="site-header">
-        <div className="nav-bar">
-          <NavLink to="/" end className={() => 'logo'} style={{ textDecoration: 'none' }}>
-            <i>V</i>
-            <span>VocabShare</span>
-          </NavLink>
-          <div className="nav-spacer" />
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="切换深色模式"
-            onClick={() => setDark((d) => !d)}
-            title="切换主题"
-          >
-            {dark ? '☀️' : '🌙'}
-          </button>
-          <nav className="nav">
-            <NavLink to="/" end>首页</NavLink>
-            <NavLink to="/search">搜索</NavLink>
-            <NavLink to="/favorites">收藏</NavLink>
-            <NavLink to="/learn">学习</NavLink>
-            <NavLink to="/quiz">测验</NavLink>
-            <NavLink to="/sentence">造句</NavLink>
-            <NavLink to="/categories">归类</NavLink>
-            <NavLink to="/recommend">今日推荐</NavLink>
-            <NavLink to="/wrong">错词本</NavLink>
-            <NavLink to="/week">本周分析</NavLink>
-            <NavLink to="/export">导出</NavLink>
-            <NavLink to="/share">分享</NavLink>
-            <NavLink to="/settings">设置</NavLink>
-          </nav>
-        </div>
-      </header>
-      <div className="app-shell">
-        {children}
-        <p className="footer-note">实用优先 · 香港 DSE English 核心词表 · 进度仅保存在本机浏览器</p>
+    <div className="workspace">
+      <div className="route-transition" key={`transition-${location.pathname}`} aria-hidden="true"><div><span>VOCABSHARE / OPENING</span><b>{meta.title}</b></div></div>
+      {menuOpen ? <button className="sidebar-scrim" type="button" aria-label="关闭功能菜单" onClick={() => setMenuOpen(false)} /> : null}
+      <aside className={`sidebar${menuOpen ? ' open' : ''}`} aria-label="功能导航">
+        <NavLink to="/" end className="logo">
+          <i>V</i>
+          <span>VocabShare<small>DSE 词汇工作台</small></span>
+        </NavLink>
+        <nav className="nav">
+          {NAV_GROUPS.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <p>{group.label}</p>
+              {group.links.map((link) => (
+                <NavLink key={link.to} to={link.to} end={link.end} onClick={() => setMenuOpen(false)}>{link.label}</NavLink>
+              ))}
+            </div>
+          ))}
+        </nav>
+        <div className="sidebar-note"><b>本机学习档案</b><span>进度、收藏与设置仅保存在当前浏览器。</span></div>
+      </aside>
+      <div className="workspace-main">
+        <header className="site-header">
+          <div className="nav-bar">
+            <button className="mobile-menu" type="button" onClick={() => setMenuOpen((open) => !open)} aria-expanded={menuOpen}>{menuOpen ? '关闭' : '功能菜单'}</button>
+            <div className="topbar-title">
+              <span>VocabShare / {meta.title}</span>
+              <h1>{meta.title}</h1>
+              <p>{meta.description}</p>
+            </div>
+            <button type="button" className="theme-toggle" aria-label={dark ? '切换为浅色模式' : '切换为深色模式'} onClick={() => setDark((d) => !d)}>
+              <span aria-hidden="true">{dark ? '☀' : '◐'}</span>{dark ? '浅色模式' : '深色模式'}
+            </button>
+          </div>
+        </header>
+        <main className="app-shell">
+          {children}
+          <p className="footer-note">VocabShare · 香港 DSE English 核心词表 · 学习数据仅保存在本机浏览器</p>
+        </main>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -150,32 +202,31 @@ function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean;
     <>
       {shared && <div className="banner">正在查看分享词表（只读词表；你的进度仍保存在本机）</div>}
       <section className="hero">
-        <div>
-          <h1>{pack.title}</h1>
-          <p>
-            本站即通道：输入 → 生成结果 → 展示。搜索一次返回英译／中译／例句；学习／今日推荐／归类／测验／造句均由本站服务生成。本地 DSE 词表约 {pack.words.length} 词。
-          </p>
+        <div className="hero-copy">
+          <span className="eyebrow">DSE VOCABULARY WORKSPACE</span>
+          <h2>{pack.title}</h2>
+          <p>查词、学习、测验与复习都在同一工作台。学习记录保存在本机；当前词表共 {pack.words.length} 个词条。</p>
+          <div className="hero-actions"><NavLink className="btn btn-primary" to="/quiz">开始连续测验</NavLink><NavLink className="btn" to="/recommend">查看今日新词</NavLink></div>
         </div>
-        <div className="stats">
-          <div className="stat"><b>{pack.words.length}</b><span>词条</span></div>
-          <div className="stat"><b>{known}</b><span>较熟悉</span></div>
-          <div className="stat"><b>{progress.wrongIds.length}</b><span>错词</span></div>
-          <div className="stat"><b>{progress.sentences.length}</b><span>造句</span></div>
+        <div className="stats" aria-label="学习数据总览">
+          <div className="stat"><b>{pack.words.length}</b><span>词表词条</span></div>
+          <div className="stat"><b>{known}</b><span>较熟悉词</span></div>
+          <div className="stat"><b>{progress.wrongIds.length}</b><span>待复习错词</span></div>
+          <div className="stat"><b>{progress.sentences.length}</b><span>已保存造句</span></div>
         </div>
       </section>
 
-      <div className="card">
-        <h3>快速入口</h3>
-        <div className="row" style={{ marginTop: 8 }}>
-          <NavLink className="btn btn-primary" to="/search">搜索</NavLink>
-          <NavLink className="btn" to="/learn">学习</NavLink>
-          <NavLink className="btn" to="/recommend">今日推荐</NavLink>
-          <NavLink className="btn" to="/categories">归类</NavLink>
-          <NavLink className="btn" to="/quiz">测验</NavLink>
-          <NavLink className="btn" to="/sentence">造句</NavLink>
-          <NavLink className="btn" to="/favorites">收藏</NavLink>
+      <section className="quick-section" aria-labelledby="quick-title">
+        <div className="section-heading"><div><span className="eyebrow">CHOOSE A TASK</span><h3 id="quick-title">你现在想做什么？</h3></div><p>每个入口对应一项独立功能，学习记录会自动保存。</p></div>
+        <div className="quick-grid">
+          <NavLink className="quick-link" to="/search"><span>01 / 查词</span><b>查找双语释义</b><p>英文或中文搜索，查看例句并收藏。</p></NavLink>
+          <NavLink className="quick-link" to="/recommend"><span>02 / 新词</span><b>生成今日推荐</b><p>按设定数量学习尚未推荐过的新词。</p></NavLink>
+          <NavLink className="quick-link" to="/learn"><span>03 / 学习</span><b>使用翻转学习卡</b><p>先回忆词义，再查看答案与记忆提示。</p></NavLink>
+          <NavLink className="quick-link" to="/quiz"><span>04 / 测验</span><b>检验词义掌握</b><p>结合例句挖空作答，自动连续出题。</p></NavLink>
+          <NavLink className="quick-link" to="/sentence"><span>05 / 输出</span><b>练习英文造句</b><p>生成句子、保存作品或获取点评。</p></NavLink>
+          <NavLink className="quick-link" to="/wrong"><span>06 / 复习</span><b>清理错词本</b><p>回顾答错词汇，掌握后手动移出。</p></NavLink>
         </div>
-      </div>
+      </section>
     </>
   )
 }
@@ -279,8 +330,8 @@ function Learn({
 
   return (
     <div className="card">
-      <h2>学习 · {i + 1}/{items.length}</h2>
-      <p className="muted">由本站服务推荐今日学什么；每词下方附造句。点「换一批」可再生成。</p>
+      <h2>翻转学习卡 · 第 {i + 1} / {items.length} 词</h2>
+      <p className="muted">点击卡片或「揭晓词义」查看中文；翻面后点击「学习下一词」继续。换一批会重新生成推荐。</p>
       <div className="row" style={{ marginBottom: 8 }}>
         <button className="btn" type="button" disabled={loading} onClick={() => void loadAi()}>
           {loading ? '推荐中…' : '换一批推荐'}
@@ -313,12 +364,12 @@ function Learn({
         <p style={{ marginBottom: 0 }}>{cur.sentence}</p>
       </div>
       <div className="row" style={{ marginTop: 12, justifyContent: 'center' }}>
-        <button className="btn" type="button" onClick={() => { setShow(false); setI((x) => (x - 1 + items.length) % items.length) }}>上一个</button>
-        <button className="btn" type="button" onClick={speak}>🔊 发音</button>
+        <button className="btn" type="button" onClick={() => { setShow(false); setI((x) => (x - 1 + items.length) % items.length) }}>上一词</button>
+        <button className="btn" type="button" onClick={speak}>播放发音</button>
         {!show ? (
-          <button className="btn btn-primary" type="button" onClick={reveal}>揭晓</button>
+          <button className="btn btn-primary" type="button" onClick={reveal}>揭晓词义</button>
         ) : (
-          <button className="btn btn-primary" type="button" onClick={() => { setShow(false); setI((x) => (x + 1) % items.length) }}>下一个</button>
+          <button className="btn btn-primary" type="button" onClick={() => { setShow(false); setI((x) => (x + 1) % items.length) }}>学习下一词</button>
         )}
       </div>
     </div>
@@ -434,20 +485,23 @@ function Quiz({
   })
 
   return (
-    <div className="card">
-      <h2>测验</h2>
-      <p className="muted">
-        连续多题：每答一题自动出全新一题（新词／例句挖空／选项）。正确 {score.ok}/{score.total}
-        {item ? ` · 第 ${idx + 1} 题` : ''}
-        {enriching ? ' · 正在润色挖空…' : ''}
-      </p>
+    <div className="card quiz-card">
+      <div className="quiz-heading">
+        <div><span className="eyebrow">CONTINUOUS QUIZ</span><h2>选择目标词的中文释义</h2><p className="muted">先读英文例句与中译挖空，再选择 A—D。作答后约 1 秒自动进入新题。</p></div>
+        <div className="quiz-score"><span>本轮答对 / 已作答</span><b>{score.ok}<small> / {score.total}</small></b></div>
+      </div>
+      <div className="quiz-status"><span>当前进度：第 {idx + 1} 题</span><span>{enriching ? '正在润色例句挖空…' : picked === null ? '等待你选择答案' : '已记录答案，即将进入下一题'}</span></div>
       {err ? <p className="warn">{err}</p> : null}
       {!item && !err ? <p className="muted">正在出题…</p> : null}
       {item ? (
         <>
-          <div className="word-big">{item.word.word}</div>
-          <p className="muted">选出「{item.word.word}」的正确中文意思</p>
-          <ClozeBlock cloze={item.cloze} />
+          <div className={`quiz-word-stage${picked !== null ? item.choices[picked]?.correct ? ' is-correct' : ' is-wrong' : ''}`}>
+            <span className="stage-label">目标单词 / TARGET WORD</span>
+            <div className="word-big">{item.word.word}</div>
+            <p>{item.word.pos} · {item.word.category}</p>
+          </div>
+          <div className="quiz-context"><ClozeBlock cloze={item.cloze} /></div>
+          <p className="answer-instruction">答案选项：选出「{item.word.word}」最准确的中文意思</p>
           <AbcdChoices
             choices={item.choices}
             picked={picked}
@@ -459,22 +513,19 @@ function Quiz({
               window.setTimeout(() => advance(), 850)
             }}
           />
-          {picked !== null ? (
-            <p style={{ marginTop: 10 }}>
-              {item.choices[picked]?.correct
-                ? `正确：${item.word.meaningZh}`
-                : `不对。正确答案：${item.word.meaningZh}`}
-            </p>
-          ) : null}
+          <div className="quiz-feedback" aria-live="polite">
+            {picked !== null ? (
+              <p className={item.choices[picked]?.correct ? 'feedback-ok' : 'feedback-bad'}>
+                <b>{item.choices[picked]?.correct ? '回答正确' : '回答错误'}</b>
+                <span>正确释义：{item.word.meaningZh}</span>
+              </p>
+            ) : <p className="muted">作答后会在这里显示正误与正确释义。</p>}
+          </div>
         </>
       ) : null}
-      <div className="row" style={{ marginTop: 12 }}>
-        <button className="btn" type="button" onClick={() => advance()} disabled={!item || picked === null}>
-          下一题
-        </button>
-        <button className="btn" type="button" onClick={() => startSession()}>
-          重新开一轮
-        </button>
+      <div className="row quiz-actions">
+        <button className="btn" type="button" onClick={() => advance()} disabled={!item || picked === null}>跳过等待，立即下一题</button>
+        <button className="btn" type="button" onClick={() => startSession()}>重置本轮题目与得分</button>
       </div>
     </div>
   )
@@ -980,7 +1031,7 @@ function FavoritesPage() {
   return (
     <>
       <div className="card">
-        <h2>搜索收藏</h2>
+        <h2>我的收藏</h2>
         <p className="muted">这里保存你从搜索（AI 中英双语释义）收藏的单词（仅本机浏览器）。</p>
         <div className="row" style={{ marginTop: 10 }}>
           <NavLink className="btn btn-primary" to="/search">去搜索单词</NavLink>
@@ -1216,7 +1267,7 @@ function Categories({ words }: { words: VocabWord[] }) {
                 <td>{w.pos}</td>
                 <td>{w.meaningZh}</td>
                 <td>{w.theme ?? '—'}</td>
-                <td><button className="btn" type="button" onClick={() => void openWord(w)}>打开</button></td>
+                <td><button className="btn" type="button" onClick={() => void openWord(w)}>查看词条</button></td>
               </tr>
             ))}
           </tbody>
@@ -1493,7 +1544,7 @@ function WrongBook({
                       setProgress(next)
                     }}
                   >
-                    移出
+                    掌握后移出错词本
                   </button>
                 </td>
               </tr>
@@ -1756,7 +1807,7 @@ function Settings() {
       <p className="muted">学习进度保存在本机浏览器，无需登录。</p>
       <div className="row" style={{ marginTop: 12, marginBottom: 12 }}>
         <button type="button" className="btn" onClick={() => setDark((d) => !d)}>
-          {dark ? '切换为浅色模式 ☀️' : '切换为深色模式 🌙'}
+          {dark ? '切换为浅色模式' : '切换为深色模式'}
         </button>
       </div>
       <p style={{ marginTop: 8 }}>
@@ -1775,6 +1826,7 @@ function AppInner() {
   const [pack, , shared] = usePack()
   const [progress, setProgress] = useState<AppProgress>(() => loadProgress())
   const [api] = useState<ApiSettings>(() => loadApiSettings())
+  const location = useLocation()
 
   const persist = useCallback((p: AppProgress) => {
     saveProgress(p)
@@ -1783,21 +1835,23 @@ function AppInner() {
 
   return (
     <Shell>
-      <Routes>
-        <Route path="/" element={<Home pack={pack} shared={shared} progress={progress} />} />
-        <Route path="/search" element={<SearchWords words={pack.words} />} />
-        <Route path="/favorites" element={<FavoritesPage />} />
-        <Route path="/learn" element={<Learn words={pack.words} progress={progress} setProgress={persist} />} />
-        <Route path="/quiz" element={<Quiz words={pack.words} progress={progress} setProgress={persist} />} />
-        <Route path="/sentence" element={<Sentence words={pack.words} progress={progress} setProgress={persist} api={api} />} />
-        <Route path="/categories" element={<Categories words={pack.words} />} />
-        <Route path="/recommend" element={<Recommend words={pack.words} progress={progress} api={api} />} />
-        <Route path="/wrong" element={<WrongBook words={pack.words} progress={progress} setProgress={persist} />} />
-        <Route path="/week" element={<Week words={pack.words} progress={progress} api={api} />} />
-        <Route path="/export" element={<ExportPage words={pack.words} progress={progress} title={pack.title} />} />
-        <Route path="/share" element={<SharePage pack={pack} />} />
-        <Route path="/settings" element={<Settings />} />
-      </Routes>
+      <div className="route-frame" key={location.pathname}>
+        <Routes location={location}>
+          <Route path="/" element={<Home pack={pack} shared={shared} progress={progress} />} />
+          <Route path="/search" element={<SearchWords words={pack.words} />} />
+          <Route path="/favorites" element={<FavoritesPage />} />
+          <Route path="/learn" element={<Learn words={pack.words} progress={progress} setProgress={persist} />} />
+          <Route path="/quiz" element={<Quiz words={pack.words} progress={progress} setProgress={persist} />} />
+          <Route path="/sentence" element={<Sentence words={pack.words} progress={progress} setProgress={persist} api={api} />} />
+          <Route path="/categories" element={<Categories words={pack.words} />} />
+          <Route path="/recommend" element={<Recommend words={pack.words} progress={progress} api={api} />} />
+          <Route path="/wrong" element={<WrongBook words={pack.words} progress={progress} setProgress={persist} />} />
+          <Route path="/week" element={<Week words={pack.words} progress={progress} api={api} />} />
+          <Route path="/export" element={<ExportPage words={pack.words} progress={progress} title={pack.title} />} />
+          <Route path="/share" element={<SharePage pack={pack} />} />
+          <Route path="/settings" element={<Settings />} />
+        </Routes>
+      </div>
     </Shell>
   )
 }
