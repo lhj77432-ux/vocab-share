@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes, useLocation, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { chatCompletion } from './lib/api'
@@ -146,15 +146,47 @@ const ROUTE_META: Record<string, { title: string; description: string }> = {
   '/settings': { title: '设置与数据说明', description: '切换外观，了解生成服务与本机数据存储方式。' },
 }
 
+const ROUTE_ORDER = Object.keys(ROUTE_META)
+
 function Shell({ children }: { children: React.ReactNode }) {
   const [dark, setDark] = useTheme()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
   const meta = ROUTE_META[location.pathname] ?? ROUTE_META['/']
+  const chapter = Math.max(0, ROUTE_ORDER.indexOf(location.pathname))
+  const previousChapter = useRef(chapter)
+  const direction = chapter >= previousChapter.current ? 'forward' : 'backward'
+  const chapterNumber = String(chapter + 1).padStart(2, '0')
   useEffect(() => setMenuOpen(false), [location.pathname])
+  useEffect(() => {
+    previousChapter.current = chapter
+  }, [chapter])
   return (
     <div className="workspace">
-      <div className="route-transition" key={`transition-${location.pathname}`} aria-hidden="true"><div><span>VOCABSHARE / OPENING</span><b>{meta.title}</b></div></div>
+      <div
+        className={`route-transition is-${direction}`}
+        key={`transition-${location.pathname}`}
+        aria-hidden="true"
+      >
+        <div className="transition-wash" />
+        <div className="transition-panels">
+          {[0, 1, 2, 3, 4].map((panel) => (
+            <i
+              className="transition-panel"
+              key={panel}
+              style={{ '--order': direction === 'forward' ? panel : 4 - panel } as React.CSSProperties}
+            />
+          ))}
+        </div>
+        <div className="transition-grid" />
+        <div className="transition-copy">
+          <div className="transition-kicker"><span>VOCABSHARE / CHAPTER {chapterNumber}</span><span>{chapterNumber} — 13</span></div>
+          <div className="transition-title" data-text={meta.title}><span>{meta.title}</span></div>
+          <div className="transition-caption"><span>{meta.description}</span><i /></div>
+        </div>
+        <div className="transition-counter">{chapterNumber}</div>
+        <div className="transition-edge">DSE VOCABULARY WORKSPACE · NEXT PAGE</div>
+      </div>
       {menuOpen ? <button className="sidebar-scrim" type="button" aria-label="关闭功能菜单" onClick={() => setMenuOpen(false)} /> : null}
       <aside className={`sidebar${menuOpen ? ' open' : ''}`} aria-label="功能导航">
         <NavLink to="/" end className="logo">
