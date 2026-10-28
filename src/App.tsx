@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes, useLocation, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
+import {
+  EXAM_LEVELS,
+  mergeCategoryBrowseWords,
+  wordInExam,
+  wordExams,
+  type ExamLevel,
+} from './data/examLevels'
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
 import {
@@ -1193,6 +1200,7 @@ function FavoritesPage() {
 }
 
 function Categories({ words }: { words: VocabWord[] }) {
+  const [exam, setExam] = useState<ExamLevel | '全部'>('全部')
   const [cat, setCat] = useState<WordCategory | '全部'>('全部')
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1207,13 +1215,32 @@ function Categories({ words }: { words: VocabWord[] }) {
   const [detailExtra, setDetailExtra] = useState<{ sentence: string; tip?: string } | null>(null)
   const [detailBusy, setDetailBusy] = useState(false)
 
+  /** Categories-only: merge exam banks; recommend/learn/quiz keep pack.words. */
+  const browseWords = useMemo(() => mergeCategoryBrowseWords(words), [words])
+
+  const examCounts = useMemo(() => {
+    const m: Record<string, number> = { 全部: browseWords.length }
+    for (const e of EXAM_LEVELS) m[e.id] = 0
+    for (const w of browseWords) {
+      for (const tag of wordExams(w)) {
+        if (tag in m) m[tag] += 1
+      }
+    }
+    return m
+  }, [browseWords])
+
+  const examFiltered = useMemo(
+    () => browseWords.filter((w) => wordInExam(w, exam)),
+    [browseWords, exam],
+  )
+
   const counts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const c of ALL_CATEGORIES) m[c] = 0
-    for (const w of words) m[w.category] = (m[w.category] ?? 0) + 1
+    for (const w of examFiltered) m[w.category] = (m[w.category] ?? 0) + 1
     return m
-  }, [words])
-  const filtered = cat === '全部' ? words : words.filter((w) => w.category === cat)
+  }, [examFiltered])
+  const filtered = cat === '全部' ? examFiltered : examFiltered.filter((w) => w.category === cat)
 
   const runCategorize = async () => {
     const input = q.trim()
@@ -1251,7 +1278,7 @@ function Categories({ words }: { words: VocabWord[] }) {
     <>
       <div className="card">
         <h2>单词归类</h2>
-        <p className="muted">输入任意内容，由本站服务归入 DSE 主题；也可浏览本地分类。点开词条会再生成释义辅助与造句。</p>
+        <p className="muted">可按考试级别（IELTS / TOEFL / GRE 等）与 DSE 主题浏览词表；智能归类仍按主题。点开词条会再生成释义辅助与造句。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -1277,9 +1304,26 @@ function Categories({ words }: { words: VocabWord[] }) {
             {aiResult.reason ? <p className="muted">{aiResult.reason}</p> : null}
           </div>
         ) : null}
-        <div className="cat-grid" style={{ marginTop: 12 }}>
+        <h3 style={{ marginTop: 16, marginBottom: 8 }}>考试级别</h3>
+        <div className="cat-grid">
+          <button type="button" className={`cat-card ${exam === '全部' ? 'on' : ''}`} onClick={() => { setExam('全部'); setCat('全部') }}>
+            <b>全部考试</b><div className="muted">{examCounts['全部'] ?? 0} 词</div>
+          </button>
+          {EXAM_LEVELS.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              className={`cat-card ${exam === e.id ? 'on' : ''}`}
+              onClick={() => { setExam(e.id); setCat('全部') }}
+            >
+              <b>{e.short}</b><div className="muted">{examCounts[e.id] ?? 0} 词</div>
+            </button>
+          ))}
+        </div>
+        <h3 style={{ marginTop: 16, marginBottom: 8 }}>主题分类</h3>
+        <div className="cat-grid">
           <button type="button" className={`cat-card ${cat === '全部' ? 'on' : ''}`} onClick={() => setCat('全部')}>
-            <b>全部</b><div className="muted">{words.length} 词</div>
+            <b>全部主题</b><div className="muted">{examFiltered.length} 词</div>
           </button>
           {ALL_CATEGORIES.map((c) => (
             <button key={c} type="button" className={`cat-card ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>
@@ -1289,7 +1333,7 @@ function Categories({ words }: { words: VocabWord[] }) {
         </div>
       </div>
       <div className="card">
-        <h3>{cat} · {filtered.length} 词</h3>
+        <h3>{exam === '全部' ? '全部考试' : exam} · {cat} · {filtered.length} 词</h3>
         <table className="table">
           <thead><tr><th>单词</th><th>词性</th><th>中文</th><th>主题</th><th></th></tr></thead>
           <tbody>
@@ -1312,7 +1356,7 @@ function Categories({ words }: { words: VocabWord[] }) {
               <h3>{detail.word}</h3>
               <button className="icon-btn" type="button" aria-label="关闭" onClick={() => setDetail(null)}>✕</button>
             </div>
-            <p><b>{detail.meaningZh}</b> · {detail.pos} · {detail.category}</p>
+            <p><b>{detail.meaningZh}</b> · {detail.pos} · {detail.category} · {wordExams(detail).join(' / ')}</p>
             {detailBusy ? <p className="muted">生成中…</p> : null}
             {detailExtra ? (
               <>

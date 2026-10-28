@@ -17,6 +17,8 @@ export interface VocabWord {
   category: WordCategory
   /** DSE paper / theme hint */
   theme?: string
+  /** Exam tags for Categories browse/filter. Omitted = DSE (default pack). */
+  exams?: Array<'DSE' | 'IELTS' | 'TOEFL' | 'GRE' | 'A-Level' | 'SAT' | 'GCSE' | 'CET-4' | 'CET-6'>
 }
 
 /** HK DSE English core pack (academic / essay-oriented; expanded beyond the old ~70 demo). */
