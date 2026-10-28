@@ -1,6 +1,24 @@
 import type { AppProgress, ApiSettings, WordListPack } from './types'
 import { DEMO_LIST_ID, DEMO_LIST_TITLE, demoWords } from '../data/dseWords'
 
+
+function accountEmail(): string | null {
+  try {
+    const raw = localStorage.getItem('vocab-share-account-session-v1')
+    if (!raw) return null
+    const s = JSON.parse(raw) as { email?: string; exp?: number }
+    if (!s?.email || !s?.exp || Date.now() > s.exp) return null
+    return String(s.email).toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+function accountScopedKey(base: string): string {
+  const email = accountEmail()
+  return email ? `${base}::${email}` : base
+}
+
 const PROGRESS_KEY = 'vocab-share-progress-v1'
 const API_KEY = 'vocab-share-api-v1'
 const CUSTOM_LISTS_KEY = 'vocab-share-lists-v1'
@@ -47,14 +65,14 @@ export function demoPack(): WordListPack {
 
 export function loadProgress(): AppProgress {
   try {
-    const raw = localStorage.getItem(PROGRESS_KEY)
+    const raw = localStorage.getItem(accountScopedKey(PROGRESS_KEY))
     if (raw) return JSON.parse(raw) as AppProgress
   } catch { /* ignore */ }
   return { byWord: {}, wrongIds: [], dayLogs: [], sentences: [] }
 }
 
 export function saveProgress(p: AppProgress) {
-  localStorage.setItem(PROGRESS_KEY, JSON.stringify(p))
+  localStorage.setItem(accountScopedKey(PROGRESS_KEY), JSON.stringify(p))
 }
 
 export function loadApiSettings(): ApiSettings {
@@ -124,7 +142,7 @@ export type FavoriteWord = {
 
 export function loadFavorites(): FavoriteWord[] {
   try {
-    const raw = localStorage.getItem(FAVORITES_KEY)
+    const raw = localStorage.getItem(accountScopedKey(FAVORITES_KEY))
     if (raw) {
       const arr = JSON.parse(raw) as FavoriteWord[]
       if (Array.isArray(arr)) return arr
@@ -134,7 +152,7 @@ export function loadFavorites(): FavoriteWord[] {
 }
 
 export function saveFavorites(list: FavoriteWord[]) {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify(list))
+  localStorage.setItem(accountScopedKey(FAVORITES_KEY), JSON.stringify(list))
 }
 
 export function isFavoriteWord(list: FavoriteWord[], word: string) {

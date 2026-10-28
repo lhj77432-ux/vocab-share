@@ -65,14 +65,19 @@ export function buildQuizSession(
   return picked.map((w) => buildLocalQuizQuestion(w, usable))
 }
 
-/** Next brand-new question excluding ids already used this session. */
+/** Next brand-new question excluding ids already used this session (+ optional global exclude). */
 export function nextFreshQuizQuestion(
   words: VocabWord[],
   usedIds: Set<string>,
+  excludeIds?: Set<string>,
 ): QuizQuestion | null {
   const usable = words.filter((w) => w.meaningZh?.trim() && w.example?.trim())
-  const fresh = usable.filter((w) => !usedIds.has(w.id))
-  const source = fresh.length ? fresh : usable
+  const notExcluded = excludeIds?.size
+    ? usable.filter((w) => !excludeIds.has(w.id))
+    : usable
+  const base = notExcluded.length >= 1 ? notExcluded : usable
+  const fresh = base.filter((w) => !usedIds.has(w.id))
+  const source = fresh.length ? fresh : base
   if (!source.length) return null
   const target = shuffle(source)[0]
   return buildLocalQuizQuestion(target, usable)

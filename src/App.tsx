@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { HashRouter, NavLink, Route, Routes, useLocation, useSearchParams } from 'react-router-dom'
+import { HashRouter, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
 import { mergeCategoryBrowseWords, wordExams } from './data/examLevels'
 import {
@@ -45,6 +45,7 @@ import {
   clearSeenRecommended,
   clearDailyRecommendCache,
   fetchDailyAiRecommend,
+  getExcludeRecommendIds,
   loadDailyCountInput,
   loadSeenRecommended,
   parseDailyCountInput,
@@ -52,6 +53,8 @@ import {
   type DailyRecommendResult,
   type RecommendItem,
 } from './lib/aiRecommend'
+import { getAccountUserId, onAccountChange } from './lib/accountAuth'
+import { AccountPage, AccountGateCard } from './components/AccountPage'
 import { buildShareUrl, decodeSharePack, shareCodeFromId } from './lib/share'
 import {
   demoPack,
@@ -145,6 +148,7 @@ const NAV_GROUPS = [
       { to: '/week', label: '本周学习分析' },
       { to: '/export', label: '导出词表' },
       { to: '/share', label: '分享当前词表' },
+      { to: '/account', label: '账号登录' },
       { to: '/settings', label: '设置与数据说明' },
     ],
   },
@@ -163,6 +167,7 @@ const ROUTE_META: Record<string, { title: string; description: string }> = {
   '/week': { title: '本周学习分析', description: '查看近七天的学习次数、答题表现与薄弱词。' },
   '/export': { title: '导出词表', description: '勾选词条，导出为 PDF、Excel 或 Word 文件。' },
   '/share': { title: '分享当前词表', description: '生成包含完整词表的公开链接并复制给他人。' },
+  '/account': { title: '账号', description: '邮箱注册／登录；忘记密码由管理员发信到注册邮箱。' },
   '/settings': { title: '设置与数据说明', description: '切换外观，了解生成服务与本机数据存储方式。' },
 }
 
@@ -383,11 +388,19 @@ function Learn({
   const [scope, setScope] = useState<StudyScope>(() => loadStudyScope())
   const studyWords = useMemo(() => resolveStudyWords(words, scope), [words, scope])
   const sk = useMemo(() => studyScopeKey(scope), [scope])
+  const [userId, setUserId] = useState<string | null>(null)
+  const [authReady, setAuthReady] = useState(false)
   const [items, setItems] = useState<{ word: VocabWord; sentence: string; tip?: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [i, setI] = useState(0)
   const [show, setShow] = useState(false)
+
+  useEffect(() => {
+    setUserId(getAccountUserId())
+    setAuthReady(true)
+    return onAccountChange(() => setUserId(getAccountUserId()))
+  }, [])
 
   const applyScope = (next: StudyScope) => {
     saveStudyScope(next)
@@ -396,6 +409,10 @@ function Learn({
   }
 
   const loadAi = useCallback(async () => {
+    if (!userId) {
+      setError('请先登录邮箱账号，才能生成翻转学习卡推荐（学习记录按账号保存）。')
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -407,6 +424,7 @@ function Learn({
         count: 8,
         forceRefresh: true,
         scopeKey: sk,
+        seenUserId: userId,
       })
       const enriched: { word: VocabWord; sentence: string; tip?: string }[] = []
       for (const it of res.items.slice(0, 8)) {
@@ -426,7 +444,12 @@ function Learn({
     } finally {
       setLoading(false)
     }
-  }, [studyWords, progress, sk])
+  }, [studyWords, progress, sk, userId])
+
+  const navigate = useNavigate()
+  const doSignIn = () => {
+    navigate('/account')
+  }
 
   useEffect(() => {
     if (wordParam) {
@@ -445,13 +468,47 @@ function Learn({
         return
       }
     }
+    if (!authReady) return
+    if (!userId) {
+      setItems([])
+      setLoading(false)
+      return
+    }
     void loadAi()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wordParam, words, sk])
+  }, [wordParam, words, sk, authReady, userId])
 
   const picker = (
     <StudyScopePicker packWords={words} scope={scope} onChange={applyScope} />
   )
+
+  const loginCard = (
+    <AccountGateCard
+      title="翻转学习卡推荐需要登录邮箱账号"
+      onGoAccount={doSignIn}
+    />
+  )
+
+  if (!authReady) {
+    return (
+      <div className="card">
+        <h2>学习</h2>
+        <p className="muted">正在检查登录状态…</p>
+      </div>
+    )
+  }
+
+  if (!userId && !wordParam) {
+    return (
+      <div className="card">
+        <h2>翻转学习卡</h2>
+        <p className="muted">生成推荐前请先登录，学习进度按账号保存。</p>
+        {picker}
+        {loginCard}
+        {error ? <p className="warn">{error}</p> : null}
+      </div>
+    )
+  }
 
   const cur = items[i]
   if (loading && !cur) {
@@ -468,8 +525,11 @@ function Learn({
       <div className="card">
         <h2>学习</h2>
         {picker}
+        {userId ? null : loginCard}
         {error ? <p className="warn">{error}</p> : <p className="muted">暂无内容</p>}
-        <button className="btn btn-primary" type="button" onClick={() => void loadAi()}>生成推荐</button>
+        {userId ? (
+          <button className="btn btn-primary" type="button" onClick={() => void loadAi()}>生成推荐</button>
+        ) : null}
       </div>
     )
   }
@@ -494,12 +554,19 @@ function Learn({
   return (
     <div className="card">
       <h2>翻转学习卡 · 第 {i + 1} / {items.length} 词</h2>
-      <p className="muted">可先选学习分类，再生成推荐。点击卡片或「揭晓词义」查看中文；换一批会按当前分类重新推荐。</p>
+      <p className="muted">
+        可先选学习分类，再生成推荐。已推荐记录绑定邮箱账号{userId ? `（${userId}）` : ''}。点击卡片或「揭晓词义」查看中文。
+      </p>
       {picker}
       <div className="row" style={{ marginBottom: 8 }}>
-        <button className="btn" type="button" disabled={loading} onClick={() => void loadAi()}>
+        <button className="btn" type="button" disabled={loading || !userId} onClick={() => void loadAi()}>
           {loading ? '推荐中…' : '换一批推荐'}
         </button>
+        {!userId ? (
+          <button className="btn btn-primary" type="button" onClick={() => doSignIn()}>
+            前往登录
+          </button>
+        ) : null}
       </div>
       {error ? <p className="warn">{error}</p> : null}
       <span className="tag">{w.category}</span>
@@ -556,14 +623,25 @@ function Quiz({
   const [err, setErr] = useState('')
   const [enriching, setEnriching] = useState(false)
   const [activeWordId, setActiveWordId] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setUserId(getAccountUserId())
+    return onAccountChange(() => setUserId(getAccountUserId()))
+  }, [])
+
+  const excludeIds = useMemo(
+    () => getExcludeRecommendIds(words, progress, userId),
+    [words, progress, userId],
+  )
 
   const startSession = useCallback(() => {
     setErr('')
     setPicked(null)
     setScore({ ok: 0, total: 0 })
-    const session = buildQuizSession(words, DEFAULT_QUIZ_LENGTH)
+    const session = buildQuizSession(words, DEFAULT_QUIZ_LENGTH, excludeIds)
     if (!session.length) {
-      setErr('词表不足，无法出题')
+      setErr('词表不足，或已学／已推／收藏词过多，无法出题')
       setQueue([])
       setUsedIds(new Set())
       setIdx(0)
@@ -574,11 +652,12 @@ function Quiz({
     setUsedIds(new Set(session.map((q) => q.word.id)))
     setIdx(0)
     setActiveWordId(session[0].word.id)
-  }, [words])
+  }, [words, excludeIds])
 
   useEffect(() => {
+    if (!userId) return
     startSession()
-  }, [startSession])
+  }, [startSession, userId])
 
   const item = queue[idx] ?? null
 
@@ -619,10 +698,10 @@ function Quiz({
         setActiveWordId(nextItem.word.id)
         return prev
       }
-      const fresh = nextFreshQuizQuestion(words, usedIds)
+      const fresh = nextFreshQuizQuestion(words, usedIds, excludeIds)
       if (!fresh) {
         // wrap: rebuild a new session continuously
-        const session = buildQuizSession(words, DEFAULT_QUIZ_LENGTH)
+        const session = buildQuizSession(words, DEFAULT_QUIZ_LENGTH, excludeIds)
         if (!session.length) return prev
         setUsedIds(new Set(session.map((q) => q.word.id)))
         setIdx(0)
@@ -638,7 +717,7 @@ function Quiz({
       setActiveWordId(fresh.word.id)
       return [...prev, fresh]
     })
-  }, [idx, usedIds, words])
+  }, [idx, usedIds, words, excludeIds])
 
   const cloneProgress = () => ({
     ...progress,
@@ -648,10 +727,21 @@ function Quiz({
     sentences: [...progress.sentences],
   })
 
+  const navigateQuiz = useNavigate()
+  if (!userId) {
+    return (
+      <div className="card">
+        <h2>连续词义测验</h2>
+        <p className="muted">测验进度与去重按账号保存，请先登录邮箱账号。</p>
+        <AccountGateCard title="连续词义测验需要登录邮箱账号" onGoAccount={() => navigateQuiz('/account')} />
+      </div>
+    )
+  }
+
   return (
     <div className="card quiz-card">
       <div className="quiz-heading">
-        <div><span className="eyebrow">CONTINUOUS QUIZ</span><h2>选择目标词的中文释义</h2><p className="muted">先读英文例句与中译挖空，再选择 A—D。作答后约 1 秒自动进入新题。</p></div>
+        <div><span className="eyebrow">CONTINUOUS QUIZ</span><h2>选择目标词的中文释义</h2><p className="muted">先读英文例句与中译挖空，再选择 A—D。作答后约 1 秒自动进入新题。已学／已推荐／收藏词会跳过{userId ? `（按账号 ${userId}）` : "（需登录）"}。未登录不可开始测验。</p></div>
         <div className="quiz-score"><span>本轮答对 / 已作答</span><b>{score.ok}<small> / {score.total}</small></b></div>
       </div>
       <div className="quiz-status"><span>当前进度：第 {idx + 1} 题</span><span>{enriching ? '正在润色例句挖空…' : picked === null ? '等待你选择答案' : '已记录答案，即将进入下一题'}</span></div>
@@ -1598,12 +1688,23 @@ function Recommend({
   const [scope, setScope] = useState<StudyScope>(() => loadStudyScope())
   const studyWords = useMemo(() => resolveStudyWords(words, scope), [words, scope])
   const sk = useMemo(() => studyScopeKey(scope), [scope])
+  const [userId, setUserId] = useState<string | null | undefined>(undefined)
   const [result, setResult] = useState<DailyRecommendResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [explain, setExplain] = useState('')
   const [planBusy, setPlanBusy] = useState(false)
-  const [seenCount, setSeenCount] = useState(() => loadSeenRecommended().size)
+  const [seenCount, setSeenCount] = useState(0)
+
+  useEffect(() => {
+    const apply = () => {
+      const id = getAccountUserId()
+      setUserId(id)
+      setSeenCount(loadSeenRecommended(id).size)
+    }
+    apply()
+    return onAccountChange(apply)
+  }, [])
 
   const list: RecommendItem[] = result?.items ?? []
 
@@ -1633,9 +1734,10 @@ function Recommend({
           count,
           forceRefresh,
           scopeKey: sk,
+          seenUserId: userId,
         })
         setResult(res)
-        setSeenCount(loadSeenRecommended().size)
+        setSeenCount(loadSeenRecommended(userId).size)
         if (res.exhausted && !res.items.length) {
           setError('尚未推荐过的新词已用完。可点「清空已推记录」后重来，或换分类 / 降低每天数量。')
         }
@@ -1645,10 +1747,11 @@ function Recommend({
         setLoading(false)
       }
     },
-    [api, countInput, progress, studyWords, sk],
+    [api, countInput, progress, studyWords, sk, userId],
   )
 
   useEffect(() => {
+    if (userId === undefined) return
     let cancelled = false
     ;(async () => {
       const count = parseDailyCountInput(loadDailyCountInput())
@@ -1670,10 +1773,11 @@ function Recommend({
           count,
           forceRefresh: false,
           scopeKey: sk,
+          seenUserId: userId,
         })
         if (!cancelled) {
           setResult(res)
-          setSeenCount(loadSeenRecommended().size)
+          setSeenCount(loadSeenRecommended(userId).size)
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
@@ -1685,7 +1789,7 @@ function Recommend({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [words, api, sk])
+  }, [words, api, sk, userId])
 
   const scopeLabel = studyScopeLabel(scope)
   const sourceLabel =
@@ -1699,7 +1803,7 @@ function Recommend({
     <div className="card">
       <h2>今日推荐</h2>
       <p className="muted">
-        可先选择学习分类（考试 / 主题），再设定每天背 N 个尚未推荐过的新词。「重新推荐」不会重复已推过的词。每词含例句中译挖空（目标词中文 ____）、ABCD 选义与推荐理由。
+        可先选择学习分类（考试 / 主题），再设定每天背 N 个尚未推荐过的新词。「重新推荐」不会重复已推过的词（已学／收藏也会跳过；登录邮箱账号后按账号隔离）。每词含例句中译挖空、ABCD 选义与推荐理由。
       </p>
 
       <StudyScopePicker packWords={words} scope={scope} onChange={(next) => {
@@ -1751,7 +1855,7 @@ function Recommend({
           disabled={loading}
           onClick={() => {
             if (!confirm('清空「已推荐过」记录？之后可以重新抽到这些词。')) return
-            clearSeenRecommended()
+            clearSeenRecommended(userId)
             clearDailyRecommendCache()
             setSeenCount(0)
             setResult(null)
@@ -2119,7 +2223,7 @@ function Settings() {
   return (
     <div className="card">
       <h2>设置</h2>
-      <p className="muted">学习进度保存在本机浏览器，无需登录。</p>
+      <p className="muted">学习进度保存在本机浏览器；登录邮箱账号后按账号隔离，并可同步到私有鉴权服务。</p>
       <div className="row" style={{ marginTop: 12, marginBottom: 12 }}>
         <button type="button" className="btn" onClick={() => setDark((d) => !d)}>
           {dark ? '切换为浅色模式' : '切换为深色模式'}
@@ -2131,7 +2235,7 @@ function Settings() {
       </p>
       <p className="muted" style={{ marginTop: 6 }}>
         本站即通道：搜索／学习／今日推荐／归类／测验／造句均由本站服务生成。
-        无需登录即可使用。尚未接入本地训练权重。
+        查词／归类／造句等可不登录使用；翻转学习卡与连续词义测验需邮箱登录。尚未接入本地训练权重。
       </p>
     </div>
   )
@@ -2164,6 +2268,7 @@ function AppInner() {
           <Route path="/week" element={<Week words={pack.words} progress={progress} api={api} />} />
           <Route path="/export" element={<ExportPage words={pack.words} progress={progress} title={pack.title} />} />
           <Route path="/share" element={<SharePage pack={pack} />} />
+          <Route path="/account" element={<AccountPage onAuthChange={() => setProgress(loadProgress())} />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </div>

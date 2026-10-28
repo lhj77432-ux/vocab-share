@@ -84,9 +84,15 @@ export function parseDailyCountInput(raw: string): number {
   return clampDailyCount(n)
 }
 
-export function loadSeenRecommended(): Set<string> {
+/** localStorage key; Puter account id namespaces per-user de-dupe. */
+export function seenRecommendedStorageKey(userId?: string | null): string {
+  const id = (userId ?? '').trim()
+  return id ? `${SEEN_RECOMMENDED_KEY}::${id}` : SEEN_RECOMMENDED_KEY
+}
+
+export function loadSeenRecommended(userId?: string | null): Set<string> {
   try {
-    const raw = localStorage.getItem(SEEN_RECOMMENDED_KEY)
+    const raw = localStorage.getItem(seenRecommendedStorageKey(userId))
     if (!raw) return new Set()
     const arr = JSON.parse(raw) as unknown
     if (!Array.isArray(arr)) return new Set()
@@ -96,22 +102,22 @@ export function loadSeenRecommended(): Set<string> {
   }
 }
 
-export function saveSeenRecommended(ids: Set<string>) {
+export function saveSeenRecommended(ids: Set<string>, userId?: string | null) {
   try {
-    localStorage.setItem(SEEN_RECOMMENDED_KEY, JSON.stringify([...ids]))
+    localStorage.setItem(seenRecommendedStorageKey(userId), JSON.stringify([...ids]))
   } catch { /* ignore */ }
 }
 
-export function markRecommendedSeen(ids: string[]) {
+export function markRecommendedSeen(ids: string[], userId?: string | null) {
   if (!ids.length) return
-  const set = loadSeenRecommended()
+  const set = loadSeenRecommended(userId)
   for (const id of ids) set.add(id)
-  saveSeenRecommended(set)
+  saveSeenRecommended(set, userId)
 }
 
-export function clearSeenRecommended() {
+export function clearSeenRecommended(userId?: string | null) {
   try {
-    localStorage.removeItem(SEEN_RECOMMENDED_KEY)
+    localStorage.removeItem(seenRecommendedStorageKey(userId))
   } catch { /* ignore */ }
 }
 
@@ -143,8 +149,9 @@ export function clearDailyRecommendCache() {
 export function getExcludeRecommendIds(
   words: VocabWord[],
   progress: AppProgress,
+  userId?: string | null,
 ): Set<string> {
-  const exclude = loadSeenRecommended()
+  const exclude = loadSeenRecommended(userId)
   for (const [id, st] of Object.entries(progress.byWord)) {
     if (st && st.seen > 0) exclude.add(id)
   }
@@ -385,12 +392,15 @@ export async function fetchDailyAiRecommend(opts: {
   forceRefresh?: boolean
   /** Fingerprint of selected study category; busts same-day cache across scopes */
   scopeKey?: string
+  /** Puter account id — namespaces seen-recommended de-dupe */
+  seenUserId?: string | null
 }): Promise<DailyRecommendResult> {
   const { words, progress, api, signal, forceRefresh } = opts
   const count = clampDailyCount(opts.count)
   const date = todayStr()
-  const scopeKey = opts.scopeKey ?? ''
-  const exclude = getExcludeRecommendIds(words, progress)
+  const seenUserId = opts.seenUserId ?? null
+  const scopeKey = `${opts.scopeKey ?? ''}|u:${seenUserId ?? ''}`
+  const exclude = getExcludeRecommendIds(words, progress, seenUserId)
   const remainingUnseen = words.filter((w) => !exclude.has(w.id)).length
 
   if (!forceRefresh) {
@@ -463,9 +473,9 @@ export async function fetchDailyAiRecommend(opts: {
     source: RecommendSource,
   ): DailyRecommendResult => {
     const sliced = items.slice(0, take)
-    markRecommendedSeen(sliced.map((x) => x.word.id))
+    markRecommendedSeen(sliced.map((x) => x.word.id), seenUserId)
     const left = words.filter((w) => {
-      const ex = getExcludeRecommendIds(words, progress)
+      const ex = getExcludeRecommendIds(words, progress, seenUserId)
       return !ex.has(w.id)
     }).length
     const exhausted = sliced.length < count || left === 0
