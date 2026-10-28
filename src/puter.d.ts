@@ -28,8 +28,17 @@ interface PuterAI {
   ): Promise<PuterChatResponse | string>
 }
 
+interface PuterAuth {
+  isSignedIn(): boolean
+  /** Intentionally overridden / unused — we never prompt login on this site. */
+  signIn(): Promise<unknown>
+  signOut?(): Promise<void>
+  getUser?(): Promise<unknown>
+}
+
 interface PuterGlobal {
   ai: PuterAI
+  auth?: PuterAuth
 }
 
 interface Window {

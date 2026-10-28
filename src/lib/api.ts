@@ -61,6 +61,25 @@ async function waitForPuter(timeoutMs = 10000): Promise<PuterGlobal> {
   throw new Error('生成服务未就绪，请刷新页面后重试')
 }
 
+/** Never open Puter's sign-in UI — reject so callers fall back silently. */
+function disablePuterSignIn(p: PuterGlobal) {
+  const auth = p.auth
+  if (!auth) return
+  try {
+    auth.signIn = () => Promise.reject(new Error('PUTER_AUTH_DISABLED'))
+  } catch {
+    /* ignore if non-writable */
+  }
+}
+
+function isPuterSignedIn(p: PuterGlobal): boolean {
+  try {
+    return typeof p.auth?.isSignedIn === 'function' && p.auth.isSignedIn() === true
+  } catch {
+    return false
+  }
+}
+
 async function puterChat(
   model: string,
   system: string,
@@ -68,6 +87,12 @@ async function puterChat(
   options?: ChatOptions,
 ): Promise<string> {
   const p = await waitForPuter()
+  disablePuterSignIn(p)
+  // Calling ai.chat while signed out auto-opens Puter's login popup (esp. mobile).
+  // Skip Puter entirely unless already signed in — silent Pollinations fallback handles it.
+  if (!isPuterSignedIn(p)) {
+    throw new Error('PUTER_SKIP_AUTH')
+  }
   const response = await p.ai.chat(
     [
       { role: 'system', content: system },
@@ -124,8 +149,8 @@ async function openaiCompatibleChat(
 }
 
 /**
- * Default: Puter.js (google/gemini-3.1-flash-lite) — no developer API key.
- * On Puter failure, silently falls back to Pollinations gpt-oss-20b.
+ * Default: Puter.js (google/gemini-3.1-flash-lite) only when already signed in.
+ * Never prompts Puter login; unsigned / failed Puter → silent Pollinations gpt-oss-20b.
  */
 export async function chatCompletion(
   settings: ApiSettings,
@@ -142,16 +167,16 @@ export async function chatCompletion(
     } catch (err) {
       if (options?.signal?.aborted) throw err
       if (options?.noFallback) throw err
-      // Silent resilience: Pollinations anonymous free endpoint
+      // Silent resilience: Pollinations anonymous free endpoint (no login UI)
       try {
         return await openaiCompatibleChat(POLLINATIONS_FALLBACK, system, userMessage, options)
-      } catch {
+      } catch (fallbackErr) {
         const msg = err instanceof Error ? err.message : String(err)
-        throw new Error(
-          msg.includes('auth') || msg.includes('Auth') || msg.includes('sign')
-            ? '请先完成登录窗口，或稍后再试'
-            : msg || 'AI 暂时不可用，请稍后再试',
-        )
+        if (msg === 'PUTER_SKIP_AUTH' || msg === 'PUTER_AUTH_DISABLED') {
+          const fb = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+          throw new Error(fb || 'AI 暂时不可用，请稍后再试')
+        }
+        throw new Error(msg || 'AI 暂时不可用，请稍后再试')
       }
     }
   }
