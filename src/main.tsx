@@ -6,7 +6,7 @@ import { neuterPuterSignIn } from './lib/puterAuth'
 
 /**
  * Puter.js auto-opens a login popup when cloud AI is used while signed out.
- * Keep signIn neutered site-wide; 翻转学习卡 uses deliberatePuterSignIn() only.
+ * Keep signIn neutered site-wide (AI-only). Product login is email+password via accountAuth, not Puter.
  */
 neuterPuterSignIn()
 if (!neuterPuterSignIn()) {
