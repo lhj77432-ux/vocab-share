@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes, useLocation, useSearchParams } from 'react-router-dom'
 import { ALL_CATEGORIES, type VocabWord, type WordCategory } from './data/dseWords'
+import { mergeCategoryBrowseWords, wordExams } from './data/examLevels'
 import {
-  EXAM_LEVELS,
-  mergeCategoryBrowseWords,
-  wordInExam,
-  wordExams,
-  type ExamLevel,
-} from './data/examLevels'
+  TREE_ROOTS,
+  level2Nodes,
+  collectThemes,
+  wordsAtPath,
+  breadcrumbLabels,
+  themeLabel,
+  type BrowsePath,
+  type TreeRootId,
+} from './data/categoryTree'
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
 import {
@@ -144,7 +148,7 @@ const ROUTE_META: Record<string, { title: string; description: string }> = {
   '/learn': { title: '翻转学习卡', description: '先看英文，再揭晓中文词义与记忆提示。' },
   '/quiz': { title: '连续词义测验', description: '结合例句挖空选择中文释义，作答后自动进入下一题。' },
   '/sentence': { title: '造句与点评', description: '围绕目标词写英文句子，可生成、保存或请求点评。' },
-  '/categories': { title: '主题归类', description: '按 DSE 主题浏览词表，或让智能服务协助归类。' },
+  '/categories': { title: '主题归类', description: '三层分类浏览：大分类 → 小分类 → 再一层；也可智能归类。' },
   '/recommend': { title: '今日新词', description: '设定每日新词数量，完成挖空与词义练习。' },
   '/wrong': { title: '错词本', description: '集中查看测验中答错的词，掌握后可手动移出。' },
   '/week': { title: '本周学习分析', description: '查看近七天的学习次数、答题表现与薄弱词。' },
@@ -1200,8 +1204,7 @@ function FavoritesPage() {
 }
 
 function Categories({ words }: { words: VocabWord[] }) {
-  const [exam, setExam] = useState<ExamLevel | '全部'>('全部')
-  const [cat, setCat] = useState<WordCategory | '全部'>('全部')
+  const [path, setPath] = useState<BrowsePath>({ root: null, mid: null, leaf: null })
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [aiResult, setAiResult] = useState<{
@@ -1218,29 +1221,80 @@ function Categories({ words }: { words: VocabWord[] }) {
   /** Categories-only: merge exam banks; recommend/learn/quiz keep pack.words. */
   const browseWords = useMemo(() => mergeCategoryBrowseWords(words), [words])
 
-  const examCounts = useMemo(() => {
-    const m: Record<string, number> = { 全部: browseWords.length }
-    for (const e of EXAM_LEVELS) m[e.id] = 0
-    for (const w of browseWords) {
-      for (const tag of wordExams(w)) {
-        if (tag in m) m[tag] += 1
-      }
+  const crumbs = useMemo(() => breadcrumbLabels(path), [path])
+  const depth = path.root ? (path.mid ? (path.leaf ? 3 : 2) : 1) : 0
+
+  const scopedWords = useMemo(() => wordsAtPath(browseWords, path), [browseWords, path])
+
+  const childCards = useMemo(() => {
+    if (depth === 0) {
+      return TREE_ROOTS.map((r) => ({
+        id: r.id,
+        label: r.label,
+        short: r.short ?? r.label,
+        count: browseWords.length,
+      }))
     }
-    return m
-  }, [browseWords])
+    if (depth === 1 && path.root) {
+      return level2Nodes(path.root).map((n) => ({
+        id: n.id,
+        label: n.label,
+        short: n.short ?? n.label,
+        count: wordsAtPath(browseWords, { root: path.root, mid: n.id, leaf: null }).length,
+      })).filter((n) => n.count > 0)
+    }
+    if (depth === 2 && path.root && path.mid) {
+      const midWords = wordsAtPath(browseWords, { root: path.root, mid: path.mid, leaf: null })
+      return collectThemes(midWords).map((theme) => ({
+        id: theme,
+        label: themeLabel(theme),
+        short: themeLabel(theme),
+        count: wordsAtPath(browseWords, { root: path.root, mid: path.mid, leaf: theme }).length,
+      })).filter((n) => n.count > 0)
+    }
+    return []
+  }, [browseWords, path, depth])
 
-  const examFiltered = useMemo(
-    () => browseWords.filter((w) => wordInExam(w, exam)),
-    [browseWords, exam],
-  )
+  const showWordList = depth === 3 || (depth === 2 && childCards.length === 0)
 
-  const counts = useMemo(() => {
-    const m: Record<string, number> = {}
-    for (const c of ALL_CATEGORIES) m[c] = 0
-    for (const w of examFiltered) m[w.category] = (m[w.category] ?? 0) + 1
-    return m
-  }, [examFiltered])
-  const filtered = cat === '全部' ? examFiltered : examFiltered.filter((w) => w.category === cat)
+  const goCrumb = (index: number) => {
+    if (index <= 0) {
+      setPath({ root: null, mid: null, leaf: null })
+      return
+    }
+    if (index === 1) {
+      setPath({ root: path.root, mid: null, leaf: null })
+      return
+    }
+    if (index === 2) {
+      setPath({ root: path.root, mid: path.mid, leaf: null })
+      return
+    }
+  }
+
+  const openChild = (id: string) => {
+    if (depth === 0) {
+      setPath({ root: id as TreeRootId, mid: null, leaf: null })
+      return
+    }
+    if (depth === 1) {
+      setPath({ root: path.root, mid: id, leaf: null })
+      return
+    }
+    if (depth === 2) {
+      setPath({ root: path.root, mid: path.mid, leaf: id })
+    }
+  }
+
+  const goBack = () => {
+    if (path.leaf) {
+      setPath({ root: path.root, mid: path.mid, leaf: null })
+    } else if (path.mid) {
+      setPath({ root: path.root, mid: null, leaf: null })
+    } else if (path.root) {
+      setPath({ root: null, mid: null, leaf: null })
+    }
+  }
 
   const runCategorize = async () => {
     const input = q.trim()
@@ -1251,7 +1305,8 @@ function Categories({ words }: { words: VocabWord[] }) {
       const r = await freeAiCategorize(input, [...ALL_CATEGORIES])
       setAiResult(r)
       if (ALL_CATEGORIES.includes(r.category as WordCategory)) {
-        setCat(r.category as WordCategory)
+        // Jump into 主题领域 → that category (level 2), ready to pick theme
+        setPath({ root: 'theme', mid: r.category, leaf: null })
       }
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e))
@@ -1274,11 +1329,17 @@ function Categories({ words }: { words: VocabWord[] }) {
     }
   }
 
+  const levelHint =
+    depth === 0 ? '选择大分类' :
+    depth === 1 ? '选择小分类' :
+    depth === 2 ? '再选一层小分类' :
+    '词表'
+
   return (
     <>
       <div className="card">
         <h2>单词归类</h2>
-        <p className="muted">可按考试级别（IELTS / TOEFL / GRE 等）与 DSE 主题浏览词表；智能归类仍按主题。点开词条会再生成释义辅助与造句。</p>
+        <p className="muted">三层分类浏览：大分类 → 小分类 → 再一层小分类，点进去继续细分。智能归类仍可用。点开词条会再生成释义辅助与造句。</p>
         <form
           className="row"
           style={{ marginTop: 8 }}
@@ -1304,51 +1365,79 @@ function Categories({ words }: { words: VocabWord[] }) {
             {aiResult.reason ? <p className="muted">{aiResult.reason}</p> : null}
           </div>
         ) : null}
-        <h3 style={{ marginTop: 16, marginBottom: 8 }}>考试级别</h3>
-        <div className="cat-grid">
-          <button type="button" className={`cat-card ${exam === '全部' ? 'on' : ''}`} onClick={() => { setExam('全部'); setCat('全部') }}>
-            <b>全部考试</b><div className="muted">{examCounts['全部'] ?? 0} 词</div>
-          </button>
-          {EXAM_LEVELS.map((e) => (
-            <button
-              key={e.id}
-              type="button"
-              className={`cat-card ${exam === e.id ? 'on' : ''}`}
-              onClick={() => { setExam(e.id); setCat('全部') }}
-            >
-              <b>{e.short}</b><div className="muted">{examCounts[e.id] ?? 0} 词</div>
-            </button>
-          ))}
-        </div>
-        <h3 style={{ marginTop: 16, marginBottom: 8 }}>主题分类</h3>
-        <div className="cat-grid">
-          <button type="button" className={`cat-card ${cat === '全部' ? 'on' : ''}`} onClick={() => setCat('全部')}>
-            <b>全部主题</b><div className="muted">{examFiltered.length} 词</div>
-          </button>
-          {ALL_CATEGORIES.map((c) => (
-            <button key={c} type="button" className={`cat-card ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>
-              <b>{c}</b><div className="muted">{counts[c] ?? 0} 词</div>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="card">
-        <h3>{exam === '全部' ? '全部考试' : exam} · {cat} · {filtered.length} 词</h3>
-        <table className="table">
-          <thead><tr><th>单词</th><th>词性</th><th>中文</th><th>主题</th><th></th></tr></thead>
-          <tbody>
-            {filtered.map((w) => (
-              <tr key={w.id}>
-                <td><b>{w.word}</b></td>
-                <td>{w.pos}</td>
-                <td>{w.meaningZh}</td>
-                <td>{w.theme ?? '—'}</td>
-                <td><button className="btn" type="button" onClick={() => void openWord(w)}>查看词条</button></td>
-              </tr>
+
+        <div className="row" style={{ marginTop: 16, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {depth > 0 ? (
+            <button type="button" className="btn" onClick={goBack}>← 返回上一级</button>
+          ) : null}
+          <nav aria-label="分类路径" className="muted" style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+            {crumbs.map((c, i) => (
+              <span key={`${c.id}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {i > 0 ? <span aria-hidden>›</span> : null}
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ padding: '2px 8px', fontSize: '0.9em' }}
+                  onClick={() => goCrumb(i)}
+                  disabled={i === crumbs.length - 1 && depth === 3}
+                >
+                  {c.label}
+                </button>
+              </span>
             ))}
-          </tbody>
-        </table>
+          </nav>
+        </div>
+
+        {!showWordList ? (
+          <>
+            <h3 style={{ marginTop: 16, marginBottom: 8 }}>{levelHint}</h3>
+            <div className="cat-grid">
+              {childCards.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  className="cat-card"
+                  onClick={() => openChild(n.id)}
+                >
+                  <b>{n.short}</b>
+                  <div className="muted">{n.count} 词</div>
+                </button>
+              ))}
+            </div>
+            {depth === 2 ? (
+              <p className="muted" style={{ marginTop: 12 }}>
+                或直接{' '}
+                <button type="button" className="btn" onClick={() => setPath({ ...path, leaf: '__all__' })}>
+                  查看本类全部 {scopedWords.length} 词
+                </button>
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </div>
+
+      {showWordList ? (
+        <div className="card">
+          <h3>
+            {crumbs.map((c) => c.label).join(' · ')} · {scopedWords.length} 词
+          </h3>
+          <table className="table">
+            <thead><tr><th>单词</th><th>词性</th><th>中文</th><th>主题</th><th></th></tr></thead>
+            <tbody>
+              {scopedWords.map((w) => (
+                <tr key={w.id}>
+                  <td><b>{w.word}</b></td>
+                  <td>{w.pos}</td>
+                  <td>{w.meaningZh}</td>
+                  <td>{w.theme ?? '—'}</td>
+                  <td><button className="btn" type="button" onClick={() => void openWord(w)}>查看词条</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
       {detail ? (
         <div className="mask show" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setDetail(null) }}>
           <div className="modal dict-modal">
@@ -1375,7 +1464,6 @@ function Categories({ words }: { words: VocabWord[] }) {
     </>
   )
 }
-
 function Recommend({
   words,
   progress,
