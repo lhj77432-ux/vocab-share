@@ -8,7 +8,7 @@
 export const AUTH_API_URL =
   (typeof import.meta !== 'undefined' &&
     (import.meta as { env?: { VITE_AUTH_API_URL?: string } }).env?.VITE_AUTH_API_URL) ||
-  'https://vocab-share-auth.lithe-pulsar-6fd.workers.dev'
+  'https://vocab-share-auth.nonchalant-authorization.workers.dev'
 
 const SESSION_KEY = 'vocab-share-account-session-v1'
 
@@ -84,7 +84,9 @@ export function isLoggedIn(): boolean {
   return !!getAccountUserId()
 }
 
-async function api<T>(
+async function api<
+  T
+>(
   path: string,
   opts: { method?: string; body?: unknown; token?: string } = {},
 ): Promise<T> {
