@@ -623,7 +623,7 @@ function Sentence({
             try {
               const sentence = await generateAiSentence(w, api)
               setText(sentence)
-              setFeedback('已填入造句，可直接保存或再改。首次使用可能需完成登录窗口。')
+              setFeedback('已填入造句，可直接保存或再改。')
             } catch (e) {
               setFeedback(e instanceof Error ? e.message : String(e))
             } finally {
