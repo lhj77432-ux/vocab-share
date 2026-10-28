@@ -45,6 +45,8 @@ type DailyRecommendCache = {
   date: string
   count: number
   source: RecommendSource
+  /** Study-scope fingerprint so category changes don't reuse wrong cache */
+  scopeKey?: string
   picks: {
     id: string
     reason: string
@@ -381,16 +383,24 @@ export async function fetchDailyAiRecommend(opts: {
   count: number
   signal?: AbortSignal
   forceRefresh?: boolean
+  /** Fingerprint of selected study category; busts same-day cache across scopes */
+  scopeKey?: string
 }): Promise<DailyRecommendResult> {
   const { words, progress, api, signal, forceRefresh } = opts
   const count = clampDailyCount(opts.count)
   const date = todayStr()
+  const scopeKey = opts.scopeKey ?? ''
   const exclude = getExcludeRecommendIds(words, progress)
   const remainingUnseen = words.filter((w) => !exclude.has(w.id)).length
 
   if (!forceRefresh) {
     const cached = loadCache()
-    if (cached && cached.date === date && cached.count === count) {
+    if (
+      cached
+      && cached.date === date
+      && cached.count === count
+      && (cached.scopeKey ?? '') === scopeKey
+    ) {
       const rebuilt = rebuildFromCache(cached, words)
       if (rebuilt) return rebuilt
     }
@@ -430,7 +440,7 @@ export async function fetchDailyAiRecommend(opts: {
     .join('\n')
 
   const system = [
-    '你是香港 DSE English 背单词助教。',
+    '你是英语背单词助教。',
     'HARD RULE: 只能从用户提供的候选词表中挑选。word 必须与候选里的英文原词完全一致（可大小写不同），id 必须是候选里的 id。',
     '严禁编造、联想、近义词替换或输出候选列表之外的任何单词。若不确定，跳过，不要瞎编。',
     '只输出 JSON 数组，不要 markdown，不要其它说明。',
@@ -443,7 +453,7 @@ export async function fetchDailyAiRecommend(opts: {
   const user = [
     `今日日期：${date}`,
     `需要推荐数量：${take}`,
-    '候选词表（仅可从中选择，均为尚未推荐过的 DSE 词）：',
+    '候选词表（仅可从中选择，均为当前分类下尚未推荐过的词）：',
     poolLines,
     '请输出 JSON 数组。',
   ].join('\n')
@@ -472,6 +482,7 @@ export async function fetchDailyAiRecommend(opts: {
       date,
       count,
       source,
+      scopeKey,
       exhausted,
       remainingUnseen: left,
       picks: sliced.map((x) => ({

@@ -12,6 +12,15 @@ import {
   type BrowsePath,
   type TreeRootId,
 } from './data/categoryTree'
+import {
+  loadStudyScope,
+  saveStudyScope,
+  resolveStudyWords,
+  studyScopeLabel,
+  studyThemeOptions,
+  scopeKey as studyScopeKey,
+  type StudyScope,
+} from './lib/studyScope'
 import { chatCompletion } from './lib/api'
 import { generateAiSentence } from './lib/aiSentence'
 import {
@@ -239,6 +248,93 @@ function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
+
+/** Compact cascading category picker for 今日推荐 / 学习 (persisted). */
+function StudyScopePicker({
+  packWords,
+  scope,
+  onChange,
+}: {
+  packWords: VocabWord[]
+  scope: StudyScope
+  onChange: (next: StudyScope) => void
+}) {
+  const midNodes = useMemo(
+    () => (scope.root ? level2Nodes(scope.root) : []),
+    [scope.root],
+  )
+  const themes = useMemo(
+    () => studyThemeOptions(packWords, scope),
+    [packWords, scope],
+  )
+  const poolCount = useMemo(
+    () => resolveStudyWords(packWords, scope).length,
+    [packWords, scope],
+  )
+
+  const setRoot = (v: string) => {
+    if (v === 'default') onChange({ root: null, mid: null, leaf: null })
+    else onChange({ root: v as TreeRootId, mid: null, leaf: null })
+  }
+  const setMid = (v: string) => {
+    onChange({ root: scope.root, mid: v || null, leaf: null })
+  }
+  const setLeaf = (v: string) => {
+    onChange({
+      root: scope.root,
+      mid: scope.mid,
+      leaf: v === '' || v === '__all__' ? '__all__' : v,
+    })
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 10, marginBottom: 8, background: 'var(--bg)' }}>
+      <div className="row" style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <label htmlFor="study-scope-root" style={{ margin: 0 }}>学习分类</label>
+        <select
+          id="study-scope-root"
+          value={scope.root ?? 'default'}
+          onChange={(e) => setRoot(e.target.value)}
+          aria-label="学习大分类"
+          style={{ minWidth: 140 }}
+        >
+          <option value="default">默认 DSE 词表</option>
+          {TREE_ROOTS.map((r) => (
+            <option key={r.id} value={r.id}>{r.label}</option>
+          ))}
+        </select>
+        {scope.root ? (
+          <select
+            value={scope.mid ?? ''}
+            onChange={(e) => setMid(e.target.value)}
+            aria-label="学习小分类"
+            style={{ minWidth: 140 }}
+          >
+            <option value="">选择小分类…</option>
+            {midNodes.map((n) => (
+              <option key={n.id} value={n.id}>{n.label}</option>
+            ))}
+          </select>
+        ) : null}
+        {scope.root && scope.mid ? (
+          <select
+            value={!scope.leaf || scope.leaf === '__all__' ? '__all__' : scope.leaf}
+            onChange={(e) => setLeaf(e.target.value)}
+            aria-label="学习细分主题"
+            style={{ minWidth: 140 }}
+          >
+            <option value="__all__">全部细分</option>
+            {themes.map((th) => (
+              <option key={th} value={th}>{themeLabel(th)}</option>
+            ))}
+          </select>
+        ) : null}
+        <span className="muted">{studyScopeLabel(scope)} · {poolCount} 词</span>
+      </div>
+    </div>
+  )
+}
+
 function Home({ pack, shared, progress }: { pack: WordListPack; shared: boolean; progress: AppProgress }) {
   const known = Object.values(progress.byWord).filter((x) => (x.ease ?? 0) >= 3).length
   return (
@@ -284,22 +380,33 @@ function Learn({
 }) {
   const [params] = useSearchParams()
   const wordParam = params.get('word')
+  const [scope, setScope] = useState<StudyScope>(() => loadStudyScope())
+  const studyWords = useMemo(() => resolveStudyWords(words, scope), [words, scope])
+  const sk = useMemo(() => studyScopeKey(scope), [scope])
   const [items, setItems] = useState<{ word: VocabWord; sentence: string; tip?: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [i, setI] = useState(0)
   const [show, setShow] = useState(false)
 
+  const applyScope = (next: StudyScope) => {
+    saveStudyScope(next)
+    setScope(next)
+    clearDailyRecommendCache()
+  }
+
   const loadAi = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
+      if (!studyWords.length) throw new Error('当前分类下暂无词条，请换一个分类')
       const res = await fetchDailyAiRecommend({
-        words,
+        words: studyWords,
         progress,
         api: getFreeAiSettings(),
         count: 8,
         forceRefresh: true,
+        scopeKey: sk,
       })
       const enriched: { word: VocabWord; sentence: string; tip?: string }[] = []
       for (const it of res.items.slice(0, 8)) {
@@ -310,7 +417,7 @@ function Learn({
           enriched.push({ word: it.word, sentence: it.sentence || it.word.example })
         }
       }
-      if (!enriched.length) throw new Error('暂无推荐，请稍后再试')
+      if (!enriched.length) throw new Error('暂无推荐，请稍后再试或换分类')
       setItems(enriched)
       setI(0)
       setShow(false)
@@ -319,11 +426,13 @@ function Learn({
     } finally {
       setLoading(false)
     }
-  }, [words, progress])
+  }, [studyWords, progress, sk])
 
   useEffect(() => {
     if (wordParam) {
-      const found = words.find((x) => x.id === wordParam || x.word.toLowerCase() === wordParam.toLowerCase())
+      const pool = mergeCategoryBrowseWords(words)
+      const found = pool.find((x) => x.id === wordParam || x.word.toLowerCase() === wordParam.toLowerCase())
+        ?? words.find((x) => x.id === wordParam || x.word.toLowerCase() === wordParam.toLowerCase())
       if (found) {
         setItems([{ word: found, sentence: found.example }])
         setI(0)
@@ -338,16 +447,27 @@ function Learn({
     }
     void loadAi()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wordParam, words])
+  }, [wordParam, words, sk])
+
+  const picker = (
+    <StudyScopePicker packWords={words} scope={scope} onChange={applyScope} />
+  )
 
   const cur = items[i]
   if (loading && !cur) {
-    return <div className="card"><h2>学习</h2><p className="muted">正在生成今日学习推荐…</p></div>
+    return (
+      <div className="card">
+        <h2>学习</h2>
+        {picker}
+        <p className="muted">正在生成「{studyScopeLabel(scope)}」学习推荐…</p>
+      </div>
+    )
   }
   if (!cur) {
     return (
       <div className="card">
         <h2>学习</h2>
+        {picker}
         {error ? <p className="warn">{error}</p> : <p className="muted">暂无内容</p>}
         <button className="btn btn-primary" type="button" onClick={() => void loadAi()}>生成推荐</button>
       </div>
@@ -374,7 +494,8 @@ function Learn({
   return (
     <div className="card">
       <h2>翻转学习卡 · 第 {i + 1} / {items.length} 词</h2>
-      <p className="muted">点击卡片或「揭晓词义」查看中文；翻面后点击「学习下一词」继续。换一批会重新生成推荐。</p>
+      <p className="muted">可先选学习分类，再生成推荐。点击卡片或「揭晓词义」查看中文；换一批会按当前分类重新推荐。</p>
+      {picker}
       <div className="row" style={{ marginBottom: 8 }}>
         <button className="btn" type="button" disabled={loading} onClick={() => void loadAi()}>
           {loading ? '推荐中…' : '换一批推荐'}
@@ -1474,6 +1595,9 @@ function Recommend({
   api: ApiSettings
 }) {
   const [countInput, setCountInput] = useState(() => loadDailyCountInput())
+  const [scope, setScope] = useState<StudyScope>(() => loadStudyScope())
+  const studyWords = useMemo(() => resolveStudyWords(words, scope), [words, scope])
+  const sk = useMemo(() => studyScopeKey(scope), [scope])
   const [result, setResult] = useState<DailyRecommendResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -1483,6 +1607,13 @@ function Recommend({
 
   const list: RecommendItem[] = result?.items ?? []
 
+  const applyScope = (next: StudyScope) => {
+    saveStudyScope(next)
+    setScope(next)
+    clearDailyRecommendCache()
+    setResult(null)
+  }
+
   const runRecommend = useCallback(
     async (forceRefresh: boolean) => {
       const count = parseDailyCountInput(countInput)
@@ -1490,17 +1621,23 @@ function Recommend({
       setLoading(true)
       setError('')
       try {
+        if (!studyWords.length) {
+          setResult(null)
+          setError('当前分类下暂无词条，请换一个分类')
+          return
+        }
         const res = await fetchDailyAiRecommend({
-          words,
+          words: studyWords,
           progress,
           api,
           count,
           forceRefresh,
+          scopeKey: sk,
         })
         setResult(res)
         setSeenCount(loadSeenRecommended().size)
         if (res.exhausted && !res.items.length) {
-          setError('尚未推荐过的新词已用完。可点「清空已推记录」后重来，或降低每天数量。')
+          setError('尚未推荐过的新词已用完。可点「清空已推记录」后重来，或换分类 / 降低每天数量。')
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
@@ -1508,7 +1645,7 @@ function Recommend({
         setLoading(false)
       }
     },
-    [api, countInput, progress, words],
+    [api, countInput, progress, studyWords, sk],
   )
 
   useEffect(() => {
@@ -1518,12 +1655,21 @@ function Recommend({
       setLoading(true)
       setError('')
       try {
+        if (!studyWords.length) {
+          if (!cancelled) {
+            setResult(null)
+            setError('当前分类下暂无词条，请换一个分类')
+            setLoading(false)
+          }
+          return
+        }
         const res = await fetchDailyAiRecommend({
-          words,
+          words: studyWords,
           progress,
           api,
           count,
           forceRefresh: false,
+          scopeKey: sk,
         })
         if (!cancelled) {
           setResult(res)
@@ -1539,21 +1685,26 @@ function Recommend({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [words, api])
+  }, [words, api, sk])
 
+  const scopeLabel = studyScopeLabel(scope)
   const sourceLabel =
     result?.source === 'ai'
-      ? '本站推荐 · 仅 DSE 新词'
+      ? `本站推荐 · ${scopeLabel}`
       : result?.source === 'local'
-        ? '本地推荐（回退）· 仅 DSE 新词'
-        : '仅 DSE 新词'
+        ? `本地推荐（回退）· ${scopeLabel}`
+        : scopeLabel
 
   return (
     <div className="card">
       <h2>今日推荐</h2>
       <p className="muted">
-        设定每天背 N 个尚未推荐过的新词。「重新推荐」不会重复已推过的词。每词含例句中译挖空（目标词中文 ____）、ABCD 选义与推荐理由。
+        可先选择学习分类（考试 / 主题），再设定每天背 N 个尚未推荐过的新词。「重新推荐」不会重复已推过的词。每词含例句中译挖空（目标词中文 ____）、ABCD 选义与推荐理由。
       </p>
+
+      <StudyScopePicker packWords={words} scope={scope} onChange={(next) => {
+        applyScope(next)
+      }} />
 
       <div className="row" style={{ marginTop: 10, marginBottom: 8 }}>
         <label htmlFor="daily-count-input" style={{ margin: 0 }}>
@@ -1613,7 +1764,7 @@ function Recommend({
 
       <p className="muted" style={{ marginBottom: 8 }}>
         {loading && !list.length
-          ? '正在挑选尚未学过的 DSE 新词…'
+          ? `正在挑选「${scopeLabel}」尚未学过的新词…`
           : result
             ? `${sourceLabel} · ${result.date} · ${list.length}/${result.appliedCount} 词 · 已推记录 ${seenCount} · 剩余约 ${result.remainingUnseen ?? '—'}`
             : sourceLabel}
@@ -1630,7 +1781,7 @@ function Recommend({
           <SensePracticeCard
             key={item.word.id}
             word={item.word}
-            pool={words}
+            pool={studyWords}
             sentence={item.sentence}
             cloze={item.cloze}
             choices={item.choices}
@@ -1654,7 +1805,7 @@ function Recommend({
               const reply = await chatCompletion(
                 api,
                 'analysis',
-                `根据今日推荐列表（仅 DSE 范围），用中文给学习计划（今日重点与复习顺序）：\n${payload}`,
+                `根据今日推荐列表（范围：${scopeLabel}），用中文给学习计划（今日重点与复习顺序）：\n${payload}`,
               )
               setExplain(reply)
             } catch (e) {
