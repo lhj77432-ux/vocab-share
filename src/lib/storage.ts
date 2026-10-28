@@ -8,7 +8,7 @@ const CUSTOM_LISTS_KEY = 'vocab-share-lists-v1'
 /** Sentinel baseUrl: use Puter.js in-browser (User-Pays, no developer API key). */
 export const PUTER_BASE = 'puter'
 
-/** Default free path via Puter.js — no API key in code; user may sign in to Puter on first use. */
+/** Default free path via Puter.js when already signed in; otherwise silent Pollinations (never prompt login). */
 export const DEFAULT_API: ApiSettings = {
   baseUrl: PUTER_BASE,
   apiKey: '',
