@@ -4,6 +4,7 @@ import {
   POLLINATIONS_FALLBACK,
   isPuterSettings,
 } from './storage'
+import { neuterPuterSignIn, stashPuterSignInOriginal } from './puterAuth'
 
 const MODE_PROMPTS: Record<StudyMode, string> = {
   vocab: '你是香港 DSE English 背单词助教。用简洁中文讲解词义、搭配与例句，必要时给简易英文例句。',
@@ -63,13 +64,8 @@ async function waitForPuter(timeoutMs = 10000): Promise<PuterGlobal> {
 
 /** Never open Puter's sign-in UI — reject so callers fall back silently. */
 function disablePuterSignIn(p: PuterGlobal) {
-  const auth = p.auth
-  if (!auth) return
-  try {
-    auth.signIn = () => Promise.reject(new Error('PUTER_AUTH_DISABLED'))
-  } catch {
-    /* ignore if non-writable */
-  }
+  stashPuterSignInOriginal(p)
+  neuterPuterSignIn(p)
 }
 
 function isPuterSignedIn(p: PuterGlobal): boolean {

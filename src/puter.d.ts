@@ -30,10 +30,10 @@ interface PuterAI {
 
 interface PuterAuth {
   isSignedIn(): boolean
-  /** Intentionally overridden / unused — we never prompt login on this site. */
+  /** Normally neutered site-wide; Learn uses stashed original via deliberatePuterSignIn. */
   signIn(): Promise<unknown>
   signOut?(): Promise<void>
-  getUser?(): Promise<unknown>
+  getUser?(): Promise<{ uuid?: string; id?: string; username?: string; email?: string } | unknown>
 }
 
 interface PuterGlobal {
